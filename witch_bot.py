@@ -132,7 +132,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("🃏 Таро‑расклад", callback_data="tarot")],
-        [InlineKeyboardButton("✨ Премиум‑подписка (1000 ₽)", callback_data="premium")],
+        [InlineKeyboardButton("✨ Премиум‑подписка через Stars", callback_data="premium")],
         [InlineKeyboardButton("💭 Поговорить с Эсмеральдой", callback_data="chat")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -146,7 +146,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{welcome}\n\n"
         "Ты можешь:\n"
         "• сделать расклад на 3 карты,\n"
-        "• купить бессрочную премиум‑подписку за 1000 ₽,\n"
+        "• купить бессрочную премиум‑подписку за 1000 ₽ (через Stars),\n"
         "• просто поговорить с ИИ‑психологом.\n\n"
         "Выбери, что хочешь сделать:",
         reply_markup=reply_markup
@@ -231,20 +231,20 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         if is_premium:
-    prompt = (
-        "Ты — Эсмеральда, игривая тарологиня и лёгкая психологиня. "
-        "Ответь на вопрос человека доброжелательно, с юмором, но без фамильярности, "
-        "используя одну‑две метафоры, 2–4 эмодзи и разговорный тон. "
-        "Добавь в ответ короткий ритуал или простое действие, "
-        "которое человек может сделать уже сегодня. "
-        f"Вот вопрос: {update.message.text}"
-    )
-else:
-    prompt = (
-        "Ты — Эсмеральда, таролог и психолог. Ответь на вопрос человека доброжелательно, "
-        "доступно и немного с юмором, используя 1–3 эмодзи. "
-        f"Вот вопрос: {update.message.text}"
-    )
+            prompt = (
+                "Ты — Эсмеральда, игривая тарологиня и лёгкая психологиня. "
+                "Ответь на вопрос человека доброжелательно, с юмором, но без фамильярности, "
+                "используя одну‑две метафоры, 2–4 эмодзи и разговорный тон. "
+                "Добавь в ответ короткий ритуал или простое действие, "
+                "которое человек может сделать уже сегодня. "
+                f"Вот вопрос: {update.message.text}"
+            )
+        else:
+            prompt = (
+                "Ты — Эсмеральда, таролог и психолог. Ответь на вопрос человека доброжелательно, "
+                "доступно и немного с юмором, используя 1–3 эмодзи. "
+                f"Вот вопрос: {update.message.text}"
+            )
 
         completion = client.chat.completions.create(
             model="openai/gpt-4o-mini",
