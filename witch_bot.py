@@ -11,6 +11,7 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     filters,
+    PreCheckoutQueryHandler,  # необходимый импорт для обработчика PreCheckout
     ContextTypes,
 )
 
