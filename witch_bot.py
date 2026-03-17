@@ -1,6 +1,9 @@
 import os
+import json
+from pathlib import Path
 import random
 import httpx
+from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, PreCheckoutQuery
 from telegram.ext import (
     ApplicationBuilder,
@@ -11,11 +14,13 @@ from telegram.ext import (
     ContextTypes,
 )
 
+
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
 
 print("TOKEN:", repr(TELEGRAM_TOKEN))
 print("OPENROUTER_KEY:", repr(OPENROUTER_KEY))
+
 
 from openai import OpenAI
 
@@ -24,8 +29,60 @@ client = OpenAI(
     base_url="https://openrouter.ai/api/v1"
 )
 
+
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
+
+# ————————————————— Файл с премиум‑пользователями —————————————————
+
+PREMIUM_FILE = Path("premium_users.json")
+
+
+def load_premium_users():
+    """Загружает список премиум‑пользователей из JSON."""
+    if PREMIUM_FILE.exists():
+        with PREMIUM_FILE.open("r", encoding="utf‑8") as f:
+            return json.load(f)
+    return {}
+
+
+def save_premium_users(premium_dict):
+    """Сохраняет список премиум‑пользователей в JSON."""
+    with PREMIUM_FILE.open("w", encoding="utf‑8") as f:
+        json.dump(premium_dict, f, ensure_ascii=False, indent=2)
+
+
+# Глобальный словарь премиум‑пользователей
+premium_users = load_premium_users()
+
+
+# ————————————————— Проверка, есть ли вечный премиум —————————————————
+
+def is_premium_permanent(user_data_raw) -> bool:
+    """Проверяет, есть ли у пользователя бессрочная премиум‑подписка."""
+    if not user_data_raw:
+        return False
+    return user_data_raw.get("premium", False) and user_data_raw.get("permanent", False)
+
+
+# ————————————————— Команда /status —————————————————
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    user_data_raw = premium_users.get(user_id)
+
+    if is_premium_permanent(user_data_raw):
+        status_text = "Ты имеешь **бессрочную премиум‑подписку** 🌟"
+    else:
+        status_text = "Ты пока не имеешь активной премиум‑подписки 😢"
+
+    await update.message.reply_text(
+        f"🔐 Статус премиум‑подписки:\n\n"
+        f"{status_text}"
+    )
+
+
+# ————————————————— Создание Stars‑инвойс‑ссылки (~1000 ₽) —————————————————
 
 def create_stars_invoice_link(title: str, description: str, amount: int) -> str:
     """Создаёт инвойс‑ссылку для Telegram Stars (XTR)."""
@@ -34,9 +91,9 @@ def create_stars_invoice_link(title: str, description: str, amount: int) -> str:
     data = {
         "title": title,
         "description": description,
-        "payload": "premium_tarot",  # уникальный payload для бота
-        "currency": "XTR",  # Stars
-        "prices": [{"label": "Премиум‑расшифровка", "amount": amount}],
+        "payload": "premium_tarot",        # уникальный payload для бота
+        "currency": "XTR",               # Stars
+        "prices": [{"label": "Премиум‑подписка", "amount": amount}],
     }
 
     resp = httpx.post(url, json=data)
@@ -50,6 +107,8 @@ def create_stars_invoice_link(title: str, description: str, amount: int) -> str:
     return result["result"]
 
 
+# ————————————————— Карты и хранение статуса —————————————————
+
 cards = [
     "Шут", "Маг", "Жрица", "Императрица", "Император",
     "Иерофант", "Влюбленные", "Колесница", "Сила", "Отшельник",
@@ -57,23 +116,37 @@ cards = [
     "Умеренность", "Дьявол", "Башня", "Звезда", "Луна", "Солнце", "Суд", "Мир"
 ]
 
-# Эта функция нужна чуть позже, для реального доступа
-PREMIUM_USERS = set()  # словарь/БД потом заменишь на что‑то реальное
 
+# ————————————————— Обработчики команд —————————————————
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    user_data_raw = premium_users.get(user_id)
+
+    if is_premium_permanent(user_data_raw):
+        context.user_data["premium"] = True
+        is_permanent = True
+    else:
+        context.user_data["premium"] = False
+        is_permanent = False
+
     keyboard = [
         [InlineKeyboardButton("🃏 Таро‑расклад", callback_data="tarot")],
-        [InlineKeyboardButton("✨ Премиум‑расшифровка", callback_data="premium")],
+        [InlineKeyboardButton("✨ Премиум‑подписка (1000 ₽)", callback_data="premium")],
         [InlineKeyboardButton("💭 Поговорить с Эсмеральдой", callback_data="chat")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
+    if is_permanent:
+        welcome = "🔮 Ты уже в премиум‑режиме, подписка бессрочная 🌟"
+    else:
+        welcome = "🔮 Я Эсмеральда. Твой бот‑Таролог и психолог."
+
     await update.message.reply_text(
-        "🔮 Я Эсмеральда. Твой бот‑Таролог и психолог.\n\n"
+        f"{welcome}\n\n"
         "Ты можешь:\n"
         "• сделать расклад на 3 карты,\n"
-        "• купить подробную расшифровку,\n"
+        "• купить бессрочную премиум‑подписку за 1000 ₽,\n"
         "• просто поговорить с ИИ‑психологом.\n\n"
         "Выбери, что хочешь сделать:",
         reply_markup=reply_markup
@@ -86,34 +159,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "tarot":
         draw = random.sample(cards, 3)
-        context.user_data["premium"] = False  # пока не оплачено
         await query.edit_message_text(
             f"🃏 Твои карты:\n{draw[0]} –  {draw[1]} –  {draw[2]}\n\n"
-            "Напиши свой вопрос ниже, и Эсмеральда ответит."
+            "Напиши свой вопрос, и Эсмеральда ответит."
         )
     elif query.data == "premium":
-        # Создаём Stars‑инвойс‑ссылку
+        # Покупка бессрочной премиум‑подписки за ~1000 ₽
         try:
             link = create_stars_invoice_link(
-                title="Премиум‑расшифровка от Эсмеральды",
-                description="Подробный разбор твоего расклада, психологический комментарий и рекомендации.",
-                amount=100,  # 100 Stars
+                title="Бессрочный премиум от Эсмеральды",
+                description="Покупаешь бессрочную премиум‑подписку за 1000 ₽. Наслаждайся ею всегда.",
+                amount=550,  # примерно 1000 ₽ по текущему курсу Telegram Stars
             )
             keyboard = [
                 [
                     InlineKeyboardButton(
-                        "💳 Оплатить 100 звёзд",
+                        "💳 Купить бессрочную подписку (1000 ₽)",
                         url=link,
                     )
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
-                "✨ Премиум‑расшифровка от Эсмеральды:\n"
+                "✨ Бессрочная премиум‑подписка:\n"
                 "• подробный разбор твоего расклада,\n"
                 "• психологический комментарий,\n"
                 "• рекомендации и маленький ритуал.\n\n"
-                "Нажми на кнопку ниже, чтобы заплатить 100 звёзд. Твой статус обновится автоматически.",
+                "Нажми на кнопку ниже, чтобы заплатить примерно 1000 ₽ и получить **бессрочную подписку**.",
                 reply_markup=reply_markup,
             )
         except Exception as e:
@@ -129,8 +201,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def tarot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Восстановим премиум‑статус
+    user_id = str(update.effective_user.id)
+    user_data_raw = premium_users.get(user_id)
+
+    if is_premium_permanent(user_data_raw):
+        context.user_data["premium"] = True
+    else:
+        context.user_data["premium"] = False
+
     draw = random.sample(cards, 3)
-    context.user_data["premium"] = False
     await update.message.reply_text(
         f"🃏 Твои карты:\n{draw[0]} –  {draw[1]} –  {draw[2]}\n\n"
         "Напиши свой вопрос, и Эсмеральда ответит."
@@ -138,11 +218,18 @@ async def tarot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Определяем, премиум‑режим или нет
-    is_premium = context.user_data.get("premium", False)
+    # Восстановим премиум‑статус
+    user_id = str(update.effective_user.id)
+    user_data_raw = premium_users.get(user_id)
+
+    if is_premium_permanent(user_data_raw):
+        context.user_data["premium"] = True
+        is_premium = True
+    else:
+        context.user_data["premium"] = False
+        is_premium = False
 
     try:
-        # если премиум, даём более длинный, «глубокий» ответ
         if is_premium:
             prompt = (
                 "Ты — Эсмеральда, таролог и психолог. Ответь подробно, "
@@ -164,7 +251,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(reply)
 
 
-# ————————————— СЮДА ВСТАВЛЯЕМ обработчики платежей —————————————
+# ————————————————— Обработчики оплаты (Stars) —————————————————
 
 async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query: PreCheckoutQuery = update.pre_checkout_query
@@ -181,14 +268,22 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
     if successful_payment.invoice_payload != "premium_tarot":
         return
 
-    # Делаем пользователя премиум
+    user_id = str(update.effective_user.id)
+
+    # Бессрочная премиум‑подписка
+    premium_users[user_id] = {
+        "premium": True,
+        "permanent": True
+    }
+    save_premium_users(premium_users)
+
     context.user_data["premium"] = True
 
-    # Отправляем премиум‑приветствие
+    # Приветствие
     surprise_messages = [
         "Ты только что открыл новый уровень энергии и интуиции. Спасибо за доверие, Эсмеральда ✨",
         "Путь к более ясному пониманию себя начался именно сейчас. Пусть твой день будет особенным 💫",
-        "Твой статус: **премиум‑пользователь 🌟**",
+        "Твой статус: **премиум‑пользователь 🌟 (бессрочная подписка)**",
     ]
     random_msg = random.choice(surprise_messages)
 
@@ -200,20 +295,19 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
     )
 
 
-# ————————————— Настройка бота и запуск —————————————
+# ————————————————— Настройка и запуск бота —————————————————
 
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("tarot", tarot_command))
+app.add_handler(CommandHandler("status", status_command))         # команда /status
 app.add_handler(CallbackQueryHandler(button_handler))
 app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), chat))
 
-# Добавляем обработчики платежей
+# Добавляем обработчики платежей Stars
 app.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
 app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
-
-# ————————————— Вывод и запуск —————————————
 
 print("BOT STARTED")
 app.run_polling()
