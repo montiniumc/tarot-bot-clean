@@ -46,4 +46,4 @@ app.add_handler(CommandHandler("tarot", tarot))
 app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), chat))
 
 print("BOT STARTED")
-app.run_polling()
+asyncio.run(main())
