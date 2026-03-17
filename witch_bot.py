@@ -1,7 +1,7 @@
 import os
 import random
 import httpx
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, PreCheckoutQuery
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -10,7 +10,6 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
@@ -24,7 +23,6 @@ client = OpenAI(
     api_key=OPENROUTER_KEY,
     base_url="https://openrouter.ai/api/v1"
 )
-
 
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
@@ -58,7 +56,6 @@ cards = [
     "Колесо фортуны", "Справедливость", "Повешенный", "Смерть",
     "Умеренность", "Дьявол", "Башня", "Звезда", "Луна", "Солнце", "Суд", "Мир"
 ]
-
 
 # Эта функция нужна чуть позже, для реального доступа
 PREMIUM_USERS = set()  # словарь/БД потом заменишь на что‑то реальное
@@ -167,11 +164,56 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(reply)
 
 
+# ————————————— СЮДА ВСТАВЛЯЕМ обработчики платежей —————————————
+
+async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query: PreCheckoutQuery = update.pre_checkout_query
+    if query.invoice_payload == "premium_tarot":
+        await query.answer(ok=True)
+    else:
+        await query.answer(ok=False, error_message="Неверный тариф.")
+
+
+async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    successful_payment = update.message.successful_payment
+
+    # Проверяем именно наш payload
+    if successful_payment.invoice_payload != "premium_tarot":
+        return
+
+    # Делаем пользователя премиум
+    context.user_data["premium"] = True
+
+    # Отправляем премиум‑приветствие
+    surprise_messages = [
+        "Ты только что открыл новый уровень энергии и интуиции. Спасибо за доверие, Эсмеральда ✨",
+        "Путь к более ясному пониманию себя начался именно сейчас. Пусть твой день будет особенным 💫",
+        "Твой статус: **премиум‑пользователь 🌟**",
+    ]
+    random_msg = random.choice(surprise_messages)
+
+    await update.message.reply_text(
+        "🎉 Спасибо за оплату!\n\n"
+        + random_msg
+        + "\n\n"
+        "Теперь ты можешь получать более подробные расклады и анализ. Напиши свой вопрос, и Эсмеральда ответит!"
+    )
+
+
+# ————————————— Настройка бота и запуск —————————————
+
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("tarot", tarot_command))
 app.add_handler(CallbackQueryHandler(button_handler))
 app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), chat))
+
+# Добавляем обработчики платежей
+app.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
+app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
+
+# ————————————— Вывод и запуск —————————————
 
 print("BOT STARTED")
 app.run_polling()
