@@ -64,13 +64,12 @@ def build_tarot_prompt(cards, question, is_premium=False):
 
 def user_stats(context):
     data = context.user_data
-    if "level" not in 
+    if "level" not in data:
         data["level"] = 0
         data["steps"] = 0
         data["last_reading"] = None
         data["bonus_readings"] = 0
     return data
-
 def can_do_reading(context):
     stats = user_stats(context)
     user_id = str(context.effective_user.id)
