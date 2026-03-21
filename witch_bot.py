@@ -4,14 +4,16 @@ from pathlib import Path
 import random
 import httpx
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, PreCheckoutQuery
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup,
+    PreCheckoutQuery,
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    filters,
-    PreCheckoutQueryHandler,  # необходимый импорт для обработчика PreCheckout
+    PreCheckoutQueryHandler,
     ContextTypes,
 )
 
@@ -34,91 +36,283 @@ client = OpenAI(
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 
-# ————————————————— Файл с премиум‑пользователями —————————————————
+# ————————————————— Премиум-пользователи —————————————————
 
 PREMIUM_FILE = Path("premium_users.json")
 
 
 def load_premium_users():
-    """Загружает список премиум‑пользователей из JSON."""
     if PREMIUM_FILE.exists():
-        with PREMIUM_FILE.open("r", encoding="utf‑8") as f:
+        with PREMIUM_FILE.open("r", encoding="utf-8") as f:
             return json.load(f)
     return {}
 
 
 def save_premium_users(premium_dict):
-    """Сохраняет список премиум‑пользователей в JSON."""
-    with PREMIUM_FILE.open("w", encoding="utf‑8") as f:
+    with PREMIUM_FILE.open("w", encoding="utf-8") as f:
         json.dump(premium_dict, f, ensure_ascii=False, indent=2)
 
 
-# Глобальный словарь премиум‑пользователей
 premium_users = load_premium_users()
 
 
-# ————————————————— Проверка, есть ли вечный премиум —————————————————
-
 def is_premium_permanent(user_data_raw) -> bool:
-    """Проверяет, есть ли у пользователя бессрочная премиум‑подписка."""
     if not user_data_raw:
         return False
     return user_data_raw.get("premium", False) and user_data_raw.get("permanent", False)
 
 
-# ————————————————— Команда /status —————————————————
+# ————————————————— Уровни и лимит бесплатных пользователей —————————————————
+
+LEVELS = ["Новичок", "Искатель", "Посвящённый", "Маг", "Верховный маг"]
+STEPS_PER_LEVEL = 5
+FREE_READING_COOLDOWN_HOURS = 24  # 1 расклад в сутки
+
+
+def user_stats(context: ContextTypes.DEFAULT_TYPE):
+    data = context.user_data
+    if "level" not in 
+        data["level"] = 0
+        data["steps"] = 0
+        data["last_free_reading_at"] = None
+        data["bonus_readings"] = 0
+    return data
+
+
+def add_step_to_user_stats(stats):
+    stats["steps"] += 1
+
+    if stats["steps"] < STEPS_PER_LEVEL:
+        return f"Ты продвинулся по пути Мага на 1 шаг ({stats['steps']}/{STEPS_PER_LEVEL})."
+
+    stats["steps"] = 0
+    stats["level"] += 1
+    lvl_name = LEVELS[min(stats["level"], len(LEVELS) - 1)]
+    stats["bonus_readings"] = max(stats["bonus_readings"] + 1, 1)
+
+    return (
+        f"Поздравляю, герой своей истории! 🎉\n"
+        f"Ты стал {lvl_name}.\n"
+        "Новый уровень — новый угол зрения на свою жизнь.\n\n"
+        "За это я дарю тебе бонусный расклад. "
+        "Введи команду /bonus, когда захочешь использовать его."
+    )
+
+
+def can_do_free_reading(context: ContextTypes.DEFAULT_TYPE) -> (bool, str):
+    stats = user_stats(context)
+
+    is_premium = (
+        context.user_data.get("premium", False)
+        or is_premium_permanent(premium_users.get(str(context._user_id)))
+    )
+
+    if is_premium:
+        return True, None
+
+    last = stats.get("last_free_reading_at")
+    if last is None:
+        return True, None
+
+    now = datetime.now()
+    if isinstance(last, str):
+        # в твоём коде лучше хранить как datetime, но для примера допускаем строку
+        return True, None
+
+    diff = now - last
+    if diff >= timedelta(hours=FREE_READING_COOLDOWN_HOURS):
+        return True, None
+
+    remaining = timedelta(hours=FREE_READING_COOLDOWN_HOURS) - diff
+    hours_left = int(remaining.total_seconds() // 3600)
+    minutes_left = int((remaining.total_seconds() % 3600) // 60)
+
+    return False, (
+        "Бесплатный расклад доступен не чаще одного раза в сутки.\n"
+        f"Следующий будет доступен примерно через {hours_left} ч {minutes_left} мин."
+    )
+
+
+def mark_free_reading_done(stats):
+    stats["last_free_reading_at"] = datetime.now()
+
+
+# ————————————————— Полная колода Таро 78 карт —————————————————
+
+# Структура: ключ = "аркан/масть:номер_имя"
+
+MAJORS = [
+    ("0", "the_fool", "Шут"),
+    ("1", "the_magician", "Маг"),
+    ("2", "the_high_priestess", "Жрица"),
+    ("3", "the_empress", "Императрица"),
+    ("4", "the_emperor", "Император"),
+    ("5", "the_hierophant", "Иерофант"),
+    ("6", "the_lovers", "Влюбленные"),
+    ("7", "the_chariot", "Колесница"),
+    ("8", "strength", "Сила"),
+    ("9", "the_hermit", "Отшельник"),
+    ("10", "wheel_of_fortune", "Колесо Фортуны"),
+    ("11", "justice", "Справедливость"),
+    ("12", "the_hanged_man", "Повешенный"),
+    ("13", "death", "Смерть"),
+    ("14", "temperance", "Умеренность"),
+    ("15", "the_devil", "Дьявол"),
+    ("16", "the_tower", "Башня"),
+    ("17", "the_star", "Звезда"),
+    ("18", "the_moon", "Луна"),
+    ("19", "the_sun", "Солнце"),
+    ("20", "judgement", "Суд"),
+    ("21", "the_world", "Мир"),
+]
+
+MINOR_SUITS = {
+    "wands": "Жезлы",
+    "cups": "Чаш",
+    "swords": "Мечей",
+    "pentacles": "Пентакли",
+}
+
+MINOR_RANKS = [
+    "ace",  # туз
+    "2", "3", "4", "5", "6", "7", "8", "9", "10",
+    "page", "knight", "queen", "king",
+]
+
+CARD_NAMES = {}  # ключ: "major:0", "wands:ace" и т.п.
+
+for num, key_name, russian_name in MAJORS:
+    k = f"major:{num}"
+    CARD_NAMES[k] = f"{russian_name}"
+
+for suit, suit_rus in MINOR_SUITS.items():
+    for rank in MINOR_RANKS:
+        k = f"{suit}:{rank}"
+        rank_map = {
+            "ace": "Туз",
+            "page": "Паж",
+            "knight": "Рыцарь",
+            "queen": "Королева",
+            "king": "Король",
+        }
+        r_name = rank_map.get(rank, rank)
+        CARD_NAMES[k] = f"{r_name} {suit_rus}"
+
+# Для твоего бота можно просто выбирать три любых карты из этого набора:
+ALL_CARDS = list(CARD_NAMES.keys())
+
+
+def random_3_tarot_keys():
+    picked = random.sample(ALL_CARDS, 3)
+    return picked
+
+
+# ————————————————— Стиль бота и промпты —————————————————
+
+# Общий system-промпт для Эсмеральды (вкл. концепт и юридический стиль)
+ESMERALDA_PROMPT_BASE = """\
+Ты — Эсмеральда, бот-таролог, для которого Таро — это мягкая психотерапия без занудства.  
+Ты говоришь тёпло, честно, с лёгким юмором, но без мистического пафоса.
+
+Характер:
+- Ты не скажешь, когда человек выйдет замуж или сколько денег будет на счету.
+- Ты помогаешь увидеть ситуацию, чувства и возможные действия.
+- Ты не снимаешь порчу, не диагностируешь болезни, не даёшь юридических и финансовых советов.
+- Ты — разговорный, поддерживающий собеседник, который не заменяет врача, психотерапевта или юриста.
+
+Обращайся к пользователю как «путник», «человек», «герой своей истории» (варьируй).
+Не используй грубость, не запугивай, не манипулируй.
+
+Формат каждого расклада или ответа:
+
+1) Ситуация:
+  - 1–3 предложения о том, что сейчас происходит в жизни человека, с опорой на карты и запрос.
+
+2) Чувства:
+  - 1–3 предложения о том, что происходит внутри: усталость, страх, надежда, смешанные ощущения.
+
+3) Действие:
+  - 1–3 предложения с мягкими, реалистичными шагами, которые человек может сделать в ближайшее время.
+
+Дополнительные правила:
+- Не используй фразы вроде «так написано судьбой» или «это приговор».
+- Вместо этого говори о «честном зеркале», «возможностях», «шагах».
+- Можно использовать фразы в духе:
+  - «Карты не приказы, а честное зеркало. Готова посмотреть правде в глаза?»
+  - «Если твой мозг в панике — давай займём его раскладом, а не драмой в TikTok.»
+  - «Один маленький шаг сегодня лучше, чем идеальный план на всю жизнь.»
+
+Если пользователь говорит о самоубийстве, самоповреждении или тяжёлом психическом состоянии:
+- Не давай инструкций и подробных советов.
+- Мягко поддержи и предложи обратиться к живому специалисту.
+- Не опускайся в панику, но покажи, что ты не можешь заменить врача/психолога.
+
+Текст, который ты пишешь, всегда остаётся развлекательным и информационным, а не медицинским, юридическим или финансовым советом.
+"""
+
+
+def build_tarot_prompt(cards_ru: list[str], question: str, is_premium: bool) -> str:
+    cards_str = " – ".join(cards_ru)
+
+    if is_premium:
+        premium_part = (
+            "Сделай развёрнутый ответ в 2–4 абзаца с мягкой психологической подоплёкой:\n"
+            "1) Ситуация: что сейчас происходит в жизни человека.\n"
+            "2) Чувства: что он сейчас переживает.\n"
+            "3) Действие: 1–3 реалистичных шага, которые он может сделать.\n"
+            "4) В конце добавь один короткий ритуал или простое действие на день.\n\n"
+            "Стиль — тёплый, живой, с лёгким юмором и 2–4 эмодзи."
+        )
+    else:
+        premium_part = (
+            "Ответь кратко, в 3–6 предложений, по структуре:\n"
+            "Ситуация, Чувства, Действие.\n"
+            "Стиль — доброжелательный, с лёгким юмором и 1–2 эмодзи. "
+            "Не добавляй сложные ритуалы и практики, только один маленький совет."
+        )
+
+    return (
+        ESMERALDA_PROMPT_BASE
+        + "\n\n"
+        f"Карты: {cards_str}\n\n"
+        f"Вопрос: {question}\n\n"
+        + premium_part
+    )
+
+
+# ————————————————— Команды /status, /start, /today, /bonus —————————————————
+
+DISCLAIMER_RU = """\
+Привет, путник. Я — Эсмеральда, твой бот‑Таролог и лёгкий психолог.
+
+Я не скажу, когда ты выйдешь замуж и не подскажу, сколько денег будет на счёте.  
+Зато помогу честно посмотреть на ситуацию, чувства и возможные шаги — без занудства и морализаторства.
+
+Важно:
+• Я не даю медицинских, юридических или финансовых консультаций.
+• Мои ответы — мягкое размышление и поддержка, а не приказы судьбы.
+• Все решения ты принимаешь сам(а) и несёшь за них ответственность.
+• Бот предназначен для пользователей старше 18 лет.
+"""
+
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     user_data_raw = premium_users.get(user_id)
 
     if is_premium_permanent(user_data_raw):
-        status_text = "Ты имеешь **бессрочную премиум‑подписку** 🌟"
+        status_text = "Ты имеет **бессрочную премиум‑подписку** 🌟"
     else:
         status_text = "Ты пока не имеешь активной премиум‑подписки 😢"
 
+    stats = user_stats(context)
+    level_name = LEVELS[min(stats["level"], len(LEVELS)-1)]
     await update.message.reply_text(
         f"🔐 Статус премиум‑подписки:\n\n"
-        f"{status_text}"
+        f"{status_text}\n\n"
+        f"Твой путь сейчас: {level_name} ({stats['steps']}/{STEPS_PER_LEVEL} шагов до следующего уровня)."
     )
 
-
-# ————————————————— Создание Stars‑инвойс‑ссылки (~1000 ₽) —————————————————
-
-def create_stars_invoice_link(title: str, description: str, amount: int) -> str:
-    """Создаёт инвойс‑ссылку для Telegram Stars (XTR)."""
-    url = f"{BASE_URL}/createInvoiceLink"
-
-    data = {
-        "title": title,
-        "description": description,
-        "payload": "premium_tarot",        # уникальный payload для бота
-        "currency": "XTR",               # Stars
-        "prices": [{"label": "Премиум‑подписка", "amount": amount}],
-    }
-
-    resp = httpx.post(url, json=data)
-    if resp.status_code != 200:
-        raise RuntimeError(f"Telegram API error: {resp.status_code} {resp.text}")
-
-    result = resp.json()
-    if not result.get("ok"):
-        raise RuntimeError(f"Telegram error: {result}")
-
-    return result["result"]
-
-
-# ————————————————— Карты и хранение статуса —————————————————
-
-cards = [
-    "Шут", "Маг", "Жрица", "Императрица", "Император",
-    "Иерофант", "Влюбленные", "Колесница", "Сила", "Отшельник",
-    "Колесо фортуны", "Справедливость", "Повешенный", "Смерть",
-    "Умеренность", "Дьявол", "Башня", "Звезда", "Луна", "Солнце", "Суд", "Мир"
-]
-
-
-# ————————————————— Обработчики команд —————————————————
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -131,12 +325,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["premium"] = False
         is_permanent = False
 
+    context._user_id = update.effective_user.id  # для удобства в user_stats
+
     keyboard = [
         [InlineKeyboardButton("🃏 Таро‑расклад", callback_data="tarot")],
         [InlineKeyboardButton("✨ Премиум‑подписка через Stars", callback_data="premium")],
         [InlineKeyboardButton("💭 Поговорить с Эсмеральдой", callback_data="chat")],
+        [InlineKeyboardButton("🌱 Ритуал дня", callback_data="ritual")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
+
+    stats = user_stats(context)
+    level_name = LEVELS[min(stats["level"], len(LEVELS)-1)]
 
     if is_permanent:
         welcome = "🔮 Ты уже в премиум‑режиме, подписка бессрочная 🌟"
@@ -145,182 +345,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"{welcome}\n\n"
+        f"Твой путь Мага: {level_name} ({stats['steps']}/{STEPS_PER_LEVEL} шагов).\n\n"
+        f"{DISCLAIMER_RU}\n\n"
         "Ты можешь:\n"
         "• сделать расклад на 3 карты,\n"
-        "• купить бессрочную премиум‑подписку за 1000 ₽ (через Stars),\n"
-        "• просто поговорить с ИИ‑психологом.\n\n"
+        "• купить бессрочную премиум‑подписку через Stars,\n"
+        "• поговорить с Эсмеральдой как с психологом,\n"
+        "• получать ежедневный ритуал.\n\n"
         "Выбери, что хочешь сделать:",
         reply_markup=reply_markup
     )
 
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == "tarot":
-        draw = random.sample(cards, 3)
-        await query.edit_message_text(
-            f"🃏 Твои карты:\n{draw[0]} –  {draw[1]} –  {draw[2]}\n\n"
-            "Напиши свой вопрос, и Эсмеральда ответит."
-        )
-    elif query.data == "premium":
-        # Покупка бессрочной премиум‑подписки за ~1000 ₽
-        try:
-            link = create_stars_invoice_link(
-                title="Бессрочный премиум от Эсмеральды",
-                description="Покупаешь бессрочную премиум‑подписку за 1000 ₽. Наслаждайся ею всегда.",
-                amount=550,  # примерно 1000 ₽ по текущему курсу Telegram Stars
-            )
-            keyboard = [
-                [
-                    InlineKeyboardButton(
-                        "💳 Купить бессрочную подписку (1000 ₽)",
-                        url=link,
-                    )
-                ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                "✨ Бессрочная премиум‑подписка:\n"
-                "• подробный разбор твоего расклада,\n"
-                "• психологический комментарий,\n"
-                "• рекомендации и маленький ритуал.\n\n"
-                "Нажми на кнопку ниже, чтобы заплатить примерно 1000 ₽ и получить **бессрочную подписку**.",
-                reply_markup=reply_markup,
-            )
-        except Exception as e:
-            await query.edit_message_text(
-                "🔴 Ошибка при создании оплаты. Попробуй позже."
-            )
-            print("Stars Invoice Error:", e)
-    elif query.data == "chat":
-        await query.edit_message_text(
-            "💭 Напиши любому Эсмеральде свой вопрос, и я отвечу.\n"
-            "Можно спросить о любви, работе, чувствах, будущем."
-        )
-
-
-async def tarot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Восстановим премиум‑статус
-    user_id = str(update.effective_user.id)
-    user_data_raw = premium_users.get(user_id)
-
-    if is_premium_permanent(user_data_raw):
-        context.user_data["premium"] = True
-    else:
-        context.user_data["premium"] = False
-
-    draw = random.sample(cards, 3)
-    await update.message.reply_text(
-        f"🃏 Твои карты:\n{draw[0]} –  {draw[1]} –  {draw[2]}\n\n"
-        "Напиши свой вопрос, и Эсмеральда ответит."
+async def privacy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "🔒 <b>Политика конфиденциальности (просто и коротко)</b>\n\n"
+        "Я храню минимальные данные необходимые для работы бота:\n"
+        "• твой user_id в Telegram;\n"
+        "• информацию о твоём уровне и пути Мага;\n"
+        "• время последнего бесплатного расклада;\n"
+        "• есть ли у тебя премиум‑подписка и бонусные расклады.\n\n"
+        "Эти данные нужны только для уровней и ограничений, а не для продажи или рекламы.\n"
+        "Ты можешь в любой момент удалить свои данные командой /delete_me, и я всё забуду."
     )
+    await update.message.reply_text(text, parse_mode="HTML")
 
 
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Восстановим премиум‑статус
+async def delete_me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    user_data_raw = premium_users.get(user_id)
-
-    if is_premium_permanent(user_data_raw):
-        context.user_data["premium"] = True
-        is_premium = True
-    else:
-        context.user_data["premium"] = False
-        is_premium = False
-
-    try:
-        if is_premium:
-            prompt = (
-        "Ты — Эсмеральда, игривая тарологиня и лёгкая психологиня. "
-        "Сделай развернутый, структурированный ответ в 2–4 абзаца. "
-        "Структура ответа:\n"
-        "1) Кратко опиши, что сейчас происходит в ситуации человека (на уровне эмоций, мыслей, динамики).\n"
-        "2) Объясни, что показывают карты про развитие ситуации в ближайшем будущем.\n"
-        "3) Дай конкретные рекомендации: что человек может сделать, чтобы улучшить ситуацию.\n"
-        "4) В конце добавь один короткий ритуал или простое действие на сегодня.\n\n"
-        "Стиль: доброжелательный, по‑человечески тёплый, с лёгким юмором. "
-        "Используй одну‑две метафоры, 2–4 эмодзи и разговорный тон, но без фамильярности и грубости. "
-        f"Вот вопрос: {update.message.text}"            )
-        else:
-            prompt = (
-        "Ты — Эсмеральда, таролог и психолог. Ответь кратко и понятно, "
-        "в 3–6 предложениях, без сложных терминов. "
-        "Опиши главное: что сейчас происходит и какой один простой шаг человек может сделать. "
-        "Стиль: доброжелательный, чуть‑чуть с юмором, используй 1–3 эмодзи. "
-        "Не добавляй длинных ритуалов и сложных практик, только один маленький совет.\n\n"
-        f"Вот вопрос: {update.message.text}"            )
-
-        completion = client.chat.completions.create(
-            model="openai/gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        reply = completion.choices[0].message.content
-    except Exception as e:
-        reply = "🔮 Ошибка… попробуй позже"
-        print("OpenRouter Error:", e)
-
-    await update.message.reply_text(reply)
-
-
-# ————————————————— Обработчики оплаты (Stars) —————————————————
-
-async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query: PreCheckoutQuery = update.pre_checkout_query
-    if query.invoice_payload == "premium_tarot":
-        await query.answer(ok=True)
-    else:
-        await query.answer(ok=False, error_message="Неверный тариф.")
-
-
-async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    successful_payment = update.message.successful_payment
-
-    # Проверяем именно наш payload
-    if successful_payment.invoice_payload != "premium_tarot":
-        return
-
-    user_id = str(update.effective_user.id)
-
-    # Бессрочная премиум‑подписка
-    premium_users[user_id] = {
-        "premium": True,
-        "permanent": True
-    }
-    save_premium_users(premium_users)
-
-    context.user_data["premium"] = True
-
-    # Приветствие
-    surprise_messages = [
-        "Ты только что открыл новый уровень энергии и интуиции. Спасибо за доверие, Эсмеральда ✨",
-        "Путь к более ясному пониманию себя начался именно сейчас. Пусть твой день будет особенным 💫",
-        "Твой статус: **премиум‑пользователь 🌟 (бессрочная подписка)**",
-    ]
-    random_msg = random.choice(surprise_messages)
-
-    await update.message.reply_text(
-        "🎉 Спасибо за оплату!\n\n"
-        + random_msg
-        + "\n\n"
-        "Теперь ты можешь получать более подробные расклады и анализ. Напиши свой вопрос, и Эсмеральда ответит!"
-    )
-
-
-# ————————————————— Настройка и запуск бота —————————————————
-
-app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("tarot", tarot_command))
-app.add_handler(CommandHandler("status", status_command))         # команда /status
-app.add_handler(CallbackQueryHandler(button_handler))
-app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), chat))
-
-# Добавляем обработчики платежей Stars
-app.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
-app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
-
-print("BOT STARTED")
-app.run_polling()
+    if user_id in premium_users:
+       
