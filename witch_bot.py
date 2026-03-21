@@ -193,8 +193,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if query.data == "tarot":
-        await today_command(update, context)
-    elif query.data == "buy_premium":
+        context.user_data["awaiting_question"] = True
+    await query.message.reply_text("🔮 Введи свой вопрос для расклада:")    
+elif query.data == "buy_premium":
         await query.edit_message_text("💰 Оплата через Stars доступна прямо в Telegram. Просто нажми кнопку 'Купить'.")
     elif query.data == "chat":
         await query.edit_message_text("💬 Пиши сюда, я буду помнить твой диалог ✨")
@@ -205,8 +206,13 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     chat_memory.setdefault(uid, []).append({"time": datetime.now().isoformat(), "text": update.message.text})
     save_json(CHAT_MEMORY_FILE, chat_memory)
-    await update.message.reply_text("💬 Я помню твой диалог. Продолжай…")
 
+    if context.user_data.get("awaiting_question"):
+        question = update.message.text
+        context.user_data["awaiting_question"] = False
+        await today_command(update, context, question=question)
+    else:
+        await update.message.reply_text("💬 Я помню твой диалог. Продолжай…")
 # ——————————————————— RUN ———————————————————
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
