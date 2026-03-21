@@ -204,16 +204,15 @@ mark_free_done(stats)
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
     if query.data == "tarot":
-        context.user_data["awaiting_question"] = True
-    await query.message.reply_text("🔮 Введи свой вопрос для расклада:")    
-elif query.data == "buy_premium":
+        await today_command(update, context)
+    elif query.data == "buy_premium":
         await query.edit_message_text("💰 Оплата через Stars доступна прямо в Telegram. Просто нажми кнопку 'Купить'.")
     elif query.data == "chat":
         await query.edit_message_text("💬 Пиши сюда, я буду помнить твой диалог ✨")
     elif query.data == "ritual":
         await query.edit_message_text("🌱 Ритуал дня: 5 минут без телефона")
-
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     chat_memory.setdefault(uid, []).append({"time": datetime.now().isoformat(), "text": update.message.text})
