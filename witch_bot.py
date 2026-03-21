@@ -72,7 +72,7 @@ FREE_READING_COOLDOWN_HOURS = 24  # 1 расклад в сутки
 
 def user_stats(context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data
-    if "level" not in 
+    if "level" not in   # Добавь data
         data["level"] = 0
         data["steps"] = 0
         data["last_free_reading_at"] = None
@@ -460,6 +460,39 @@ async def ritual_after_command(update: Update, context: ContextTypes.DEFAULT_TYP
     progress_text = add_step_to_user_stats(stats)
 
     await update.message.reply_text(msg + "\n\n" + progress_text)
+
+
+# ————————————————— Отсутствующие обработчики —————————————————
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик кнопок"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "tarot":
+        await today_command(update, context)
+    elif query.data == "premium":
+        await update.callback_query.edit_message_text("💫 Премиум скоро появится!")
+    elif query.data == "chat":
+        await update.callback_query.edit_message_text("💭 Чат с Эсмеральдой скоро!")
+    elif query.data == "ritual":
+        await ritual_command(update, context)
+
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Простой чат"""
+    await update.message.reply_text("💭 Расскажи, что тебя волнует?")
+
+async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение платежа Stars"""
+    query = update.pre_checkout_query
+    await query.answer(ok=True)
+
+async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Успешный платёж"""
+    user_id = str(update.effective_user.id)
+    premium_users[user_id] = {"premium": True, "permanent": True}
+    save_premium_users(premium_users)
+    await update.message.reply_text("🌟 Бессрочная премиум-подписка активирована!")
 
 
 # ————————————————— Основной app и запуск —————————————————
