@@ -186,8 +186,20 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ques
         reply = "🔮 Ошибка генерации…"
 
     msg = f"🃏 {' – '.join(cards)}\n\n{reply}\n\n{add_step(stats)}"
+
+# Триггер ревности
+if "третье лицо" in question.lower() or "он с кем-то" in question.lower() or "она с кем-то" in question.lower() or "третий" in question.lower() or "третья" in question.lower():
+    msg += "\n\n💔 Есть скрытый фактор — возможное третье лицо в ситуации."
+
+# Автоворонка на премиум
+if not can_use and not context.user_data.get("premium"):
+    kb = [[InlineKeyboardButton("💰 Купить премиум", callback_data="buy_premium")]]
+    msg += "\n\nДля расширенного расклада с подробным ответом и бонусами, нажми кнопку ниже:"
+    await send(msg, reply_markup=InlineKeyboardMarkup(kb))
+else:
     await send(msg)
-    mark_free_done(stats)
+
+mark_free_done(stats)
 # ——————————————————— BUTTONS ———————————————————
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
