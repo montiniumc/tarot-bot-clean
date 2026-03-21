@@ -14,6 +14,7 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     PreCheckoutQueryHandler,
+    filters,
     ContextTypes,
 )
 
@@ -29,7 +30,7 @@ from openai import OpenAI
 
 client = OpenAI(
     api_key=OPENROUTER_KEY,
-    base_url="https://openrouter.ai/api/v1"
+    base_url="https://openrouter.ai/api/v1",
 )
 
 
@@ -209,18 +210,50 @@ def random_3_tarot_keys():
 ESMERALDA_PROMPT_BASE = """\
 Ты — Эсмеральда, бот-таролог, для которого Таро — это мягкая психотерапия без занудства.  
 Ты говоришь тёпло, честно, с лёгким юмором, но без мистического пафоса.
-...
-(полный текст промпта здесь — как в предыдущем ответе; если хочешь, можешь вставить его сверху, но ради длины оставлю только начало)
+
+Ты не диагност, не врач, не юрист и не «снимаешь порчу».  
+Ты помогаешь человеку честно посмотреть на ситуацию, чувства и возможные действия, но не заменяешь специалистов.
+
+Формат ответа:
+1) Ситуация: 1–3 предложения про то, что сейчас происходит в жизни человека.
+2) Чувства: 1–3 предложения про внутреннее состояние, страхи, надежды.
+3) Действие: 1–3 предложения про мягкие, реалистичные шаги, которые человек может сделать.
+
+Ты:
+- не угрожаешь, не запугиваешь, не создашь ощущение «приговора судьбы»;
+- можешь ссылаться на «честное зеркало», на «шаги», но не на «фатальность»;
+- можешь использовать фразы вроде:
+  • «Карты не приказы, а честное зеркало.»
+  • «Если твой мозг в панике — давай займём его раскладом, а не драмой в TikTok.»
+  • «Один маленький шаг сегодня лучше, чем идеальный план на всю жизнь.»
+
+Если пользователь пишет о намерении причинить себе вред, суицидальных мыслях или тяжёлом психическом состоянии:
+- не давай конкретных инструкций;
+- мягко поддержи и предложи обратиться к живому специалисту (психологу, психиатру, врачу).
+
+Все твои ответы — развлекательный и информационный контент, а не медицинская, юридическая или финансовая консультация.
 """
 
 
 def build_tarot_prompt(cards_ru: list[str], question: str, is_premium: bool) -> str:
     cards_str = " – ".join(cards_ru)
     if is_premium:
-        # стандартный премиум‑промпт, как у тебя
+        extra = (
+            "Сделай развёрнутый ответ в 2–4 абзаца:
+             1) Ситуация — что сейчас происходит в жизни человека.
+             2) Чувства — что он сейчас переживает.
+             3) Действие — 1–3 реалистичных шага, которые он может сделать.
+             4) В конце добавь один короткий ритуал или простое действие на день.
+
+             Стиль — тёплый, живой, с лёгким юмором."
+        )
     else:
-        # стандартный обычный промпт, как у тебя
-    return ESMERALDA_PROMPT_BASE + "\n\n" + основной текст промпта
+        extra = (
+            "Ответь кратко, в 3–6 предложений, по структуре: Ситуация, Чувства, Действие.
+             Стиль — доброжелательный, с лёгким юмором. Не добавляй сложные ритуалы."
+        )
+
+    return ESMERALDA_PROMPT_BASE + "\n\nКарты: " + cards_str + "\n\nВопрос: " + question + "\n\n" + extra
 
 
 # ————————————————— DISCLAIMER и политика конфиденциальности —————————————————
@@ -257,8 +290,7 @@ async def delete_me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     if user_id in premium_users:
         del premium_users[user_id]
-    if "user_data" in context.__dict__:
-        context.user_data.clear()
+    context.user_data.clear()
     await update.message.reply_text(
         "Все данные, связанные с твоим аккаунтом в этом боте, удалены.\n"
         "Если вернёшься — начнём путь Мага с нуля."
@@ -337,14 +369,26 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(error_msg)
         return
 
-    # здесь вытягивание карт и ответ от модели
     picked = random_3_tarot_keys()
     cards_ru = [CARD_NAMES[k] for k in picked]
-    # ... вызов твоего промпта и модели
+
+    question = "Как дела сегодня в жизни человека?"
+    prompt = build_tarot_prompt(cards_ru, question, stats.get("is_premium", False))
+    try:
+        completion = client.chat.completions.create(
+            model="openai/gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        reply = completion.choices[0].message.content
+    except Exception as e:
+        reply = "🔮 Ошибка генерации ответа… попробуй позже"
 
     await update.message.reply_text(
         "<b>Расклад дня:</b>\n\n"
-        "...\n\n" + add_step_to_user_stats(stats)
+        f"Карты: {cards_ru[0]} – {cards_ru[1]} – {cards_ru[2]}\n\n"
+        + reply
+        + "\n\n"
+        + add_step_to_user_stats(stats)
     )
     mark_free_reading_done(stats)
 
@@ -357,54 +401,86 @@ async def path_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Каждый расклад или ритуал — ещё один шаг по пути Мага."
     )
 
+# ... всё то, что было до сюда (импорты, загрузка премиум‑пользователей, уровень, карты, промпт и т.д.) ...
 
-# остальные хендлеры (chat, /after, /bonus, button_handler, оплата и т.д.) — 
-# оставляешь как у тебя, только вставляешь полный текст с промптами и т.п.
+# ————————————————— Ежедневный ритуал и /after —————————————————
 
-def create_stars_invoice_link(title: str, description: str, amount: int) -> str:
-    url = f"{BASE_URL}/createInvoiceLink"
-    data = {
-        "title": title,
-        "description": description,
-        "payload": "premium_tarot",
-        "currency": "XTR",
-        "prices": [{"label": "Премиум‑подписка", "amount": amount}],
-    }
-    resp = httpx.post(url, json=data)
-    if resp.status_code != 200:
-        raise RuntimeError(f"Telegram API error: {resp.status_code} {resp.text}")
-    result = resp.json()
-    if not result.get("ok"):
-        raise RuntimeError(f"Telegram error: {result}")
-    return result["result"]
+RITUALS = [
+    "Ритуал дня: 5 минут без телефона перед сном. Просто посмотри в окно или потолок и найди хотя бы одну вещь, которая кажется приятной или спокойной.",
+    "Ритуал дня: выпей один стакан воды осознанно, без ленты и параллельных задач.",
+    "Ритуал дня: запиши одну мысль, которую хочешь отпустить, и одну, которую хочешь поддержать в себе.",
+]
 
 
-async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query: PreCheckoutQuery = update.pre_checkout_query
-    if query.invoice_payload == "premium_tarot":
-        await query.answer(ok=True)
-    else:
-        await query.answer(ok=False, error_message="Неверный тариф.")
+async def ritual_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    idx = hash(update.effective_user.id) % len(RITUALS)
+    await update.message.reply_text(
+        RITUALS[idx] + "\n\n"
+        "Когда сделаешь — нажми /after, и я вытяну карту, которая опишет твой день после ритуала."
+    )
 
 
-async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    successful_payment = update.message.successful_payment
-    if successful_payment.invoice_payload != "premium_tarot":
+async def ritual_after_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    То же, что /today, но позиционируется как расклад "после ритуала".
+    """
+    stats = user_stats(context)
+
+    # защищаем от частых бесплатных запросов
+    can_use, error_msg = can_do_free_reading(context)
+    if not can_use:
+        await update.message.reply_text(error_msg)
         return
 
-    user_id = str(update.effective_user.id)
-    premium_users[user_id] = {
-        "premium": True,
-        "permanent": True
-    }
-    save_premium_users(premium_users)
-    context.user_data["premium"] = True
+    # вытягиваем карты так же, как в today_command
+    picked = random_3_tarot_keys()
+    cards_ru = [CARD_NAMES[k] for k in picked]
 
-    surprise_messages = [
-        "Ты только что открыл новый уровень энергии и интуиции. Спасибо за доверие, Эсмеральда ✨",
-        "Путь к более ясному пониманию себя начался именно сейчас. Пусть твой день будет особенным 💫",
-        "Твой статус: **премиум‑пользователь 🌟 (бессрочная подписка)**",
-    ]
-    random_msg = random.choice(surprise_messages)
-    await update.message.reply_text(
-        "🎉 Спасибо за оплату!\n
+    question = "Как выглядит твой день, если ты только что выполнил ритуал?"
+    prompt = build_tarot_prompt(cards_ru, question, stats.get("is_premium", False))
+
+    try:
+        completion = client.chat.completions.create(
+            model="openai/gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        reply = completion.choices[0].message.content
+    except Exception as e:
+        reply = "🔮 Ошибка генерации ответа… попробуй позже"
+
+    msg = (
+        "<b>Вот карта, которая лучше всего описывает твой день после ритуала.</b>\n\n"
+        f"Карты: {cards_ru[0]} – {cards_ru[1]} – {cards_ru[2]}\n\n"
+        + reply
+        + "\n\n"
+        "И да, ты только что сделал(а) для себя больше, чем кажется."
+    )
+
+    mark_free_reading_done(stats)
+    progress_text = add_step_to_user_stats(stats)
+
+    await update.message.reply_text(msg + "\n\n" + progress_text)
+
+
+# ————————————————— Основной app и запуск —————————————————
+
+app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("today", today_command))
+app.add_handler(CommandHandler("path", path_command))
+app.add_handler(CommandHandler("privacy", privacy_command))
+app.add_handler(CommandHandler("delete_me", delete_me_command))
+app.add_handler(CommandHandler("status", status_command))
+
+app.add_handler(CommandHandler("ritual", ritual_command))
+app.add_handler(CommandHandler("after", ritual_after_command))
+
+app.add_handler(CallbackQueryHandler(button_handler))
+app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), chat))
+
+app.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
+app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
+
+print("BOT STARTED")
+app.run_polling()
