@@ -207,8 +207,7 @@ def build_tarot_prompt(cards_ru: list[str], question: str, is_premium: bool) -> 
     cards_str = " – ".join(cards_ru)
     if is_premium:
         extra = (
-            "Сделай развёрнутый ответ в 2-4 абзаца: "
-            "1) Ситуация. 2) Чувства. 3) Действие. 4) Ритуал. "
+            extra="Сделай развёрнутый ответ в 2-4 абзаца: 1)Ситуация 2)Чувства 3)Действие"
             "Стиль — тёплый, живой, с юмором."
         )
     else:
@@ -232,18 +231,12 @@ DISCLAIMER_RU = """Привет, путник. Я — Эсмеральда, тв
 
 # ————————————————— Команды —————————————————
 async def privacy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "🔒 <b>Политика конфиденциальности (просто и коротко)</b>\n\n"
-        "Я храню минимальные данные, необходимые для работы бота:\n"
-        "• твой user_id в Telegram;\n"
-        "• информацию о твоём уровне и пути Мага;\n"
-        "• время последнего бесплатного расклада;\n"
-        "• есть ли у тебя премиум‑подписка и бонусные расклады.\n\n"
-        "Эти данные нужны только для уровней и ограничений, а не для продажи или рекламы.\n"
-        "Ты можешь в любой момент удалить свои данные командой /delete_me, и я всё забуду."
+    await update.message.reply_text(
+        "🔒 Политика конфиденциальности\\n\\n"
+        "Я храню минимум данных для работы бота.\\n"
+        "Ты можешь удалить их командой /delete_me.",
+        parse_mode="HTML"
     )
-    await update.message.reply_text(text, parse_mode="HTML")
-
 async def delete_me_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     if user_id in premium_users:
