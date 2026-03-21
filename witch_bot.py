@@ -4,7 +4,9 @@ import random
 from pathlib import Path
 from datetime import datetime, timedelta
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
+)
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters, ContextTypes, PreCheckoutQueryHandler
@@ -26,15 +28,15 @@ def load_db():
         return json.loads(DB_FILE.read_text(encoding="utf-8"))
     return {}
 
-def save_db(db):
-    DB_FILE.write_text(json.dumps(db, ensure_ascii=False, indent=2), encoding="utf-8")
+def save_db(data):
+    DB_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 db = load_db()
 
-def get_user(update):
+def get_uid(update):
     return str(update.effective_user.id)
 
-def get_user_data(uid):
+def get_user(uid):
     if uid not in db:
         db[uid] = {
             "premium": False,
@@ -43,14 +45,26 @@ def get_user_data(uid):
         }
     return db[uid]
 
-# === SAFE REPLY ===
-async def safe_reply(update, text, kb=None):
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=kb)
-    else:
-        await update.message.reply_text(text, reply_markup=kb)
+# === PRIVACY ===
+PRIVACY_TEXT = """
+🔒 Политика конфиденциальности
 
-# === TAROT (78 + reversed) ===
+Я храню:
+• Telegram ID
+• историю диалога
+• действия внутри бота
+
+Используется только для работы бота.
+
+❗ Данные не передаются третьим лицам
+
+Удаление: /delete_me
+
+Соответствие ФЗ-152 РФ
+18+
+"""
+
+# === TAROT ===
 MAJORS = [
     "Шут","Маг","Жрица","Императрица","Император","Иерофант",
     "Влюбленные","Колесница","Сила","Отшельник","Колесо Фортуны",
@@ -71,11 +85,10 @@ for suit, ranks in SUITS.items():
         ALL_CARDS.append(f"{r} {suit}")
 
 def pick_cards():
-    result = []
     cards = random.sample(ALL_CARDS, 3)
+    result = []
     for c in cards:
-        reversed_flag = random.choice([True, False])
-        if reversed_flag:
+        if random.choice([True, False]):
             result.append(f"{c} (перевернутая)")
         else:
             result.append(c)
@@ -95,7 +108,7 @@ def can_free(user):
     if diff >= timedelta(hours=24):
         return True, None
 
-    return False, "⏳ Бесплатный расклад уже был. Хочешь глубже — открой премиум ✨"
+    return False, "⏳ Бесплатный расклад уже был.\nХочешь глубже — открой премиум ✨"
 
 def mark_free(user):
     user["last_free"] = datetime.now().isoformat()
@@ -104,7 +117,7 @@ def mark_free(user):
 def build_prompt(cards, question, history):
     hist = "\n".join(history[-6:])
     return f"""
-Ты Эсмеральда — живой таролог с психологическим подходом.
+Ты — Эсмеральда, живой таролог.
 
 История:
 {hist}
@@ -112,12 +125,9 @@ def build_prompt(cards, question, history):
 Карты: {", ".join(cards)}
 Вопрос: {question}
 
-ВАЖНО:
-- учитывай перевёрнутые карты
-- не пугай
-- говори как живой человек
+Учитывай перевёрнутые карты.
 
-Ответ:
+Формат:
 ✨ Ситуация:
 💔 Чувства:
 🚀 Действие:
@@ -131,7 +141,7 @@ def ask_gpt(prompt):
         )
         return r.choices[0].message.content
     except:
-        return "Карты молчат... попробуй позже 😢"
+        return "Карты молчат… попробуй позже"
 
 # === UI ===
 def main_kb():
@@ -139,46 +149,23 @@ def main_kb():
         [InlineKeyboardButton("🃏 Бесплатный расклад", callback_data="free")],
         [InlineKeyboardButton("💭 Его мысли", callback_data="thoughts")],
         [InlineKeyboardButton("💔 Вернётся ли он", callback_data="return")],
-        [InlineKeyboardButton("⭐ Премиум", callback_data="premium")]
+        [InlineKeyboardButton("⭐ Премиум", callback_data="premium")],
+        [InlineKeyboardButton("🔒 Конфиденциальность", callback_data="privacy")]
     ])
 
-# === LOGIC ===
+# === COMMANDS ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await safe_reply(update, "🔮 Я Эсмеральда. Смотрю глубже, чем кажется.", main_kb())
+    await update.message.reply_text(
+        "🔮 Я Эсмеральда. Задай вопрос — и посмотрим, что скрыто.",
+        reply_markup=main_kb()
+    )
 
-async def free_reading(update, context):
-    uid = get_user(update)
-    user = get_user_data(uid)
-
-    ok, msg = can_free(user)
-    if not ok:
-        await safe_reply(update, msg, main_kb())
-        return
-
-    cards = pick_cards()
-    ans = ask_gpt(build_prompt(cards, "Что важно сейчас?", user["history"]))
-
-    user["history"].append(ans)
-    mark_free(user)
-    save_db(db)
-
-    await safe_reply(update, f"🃏 {' – '.join(cards)}\n\n{ans}", main_kb())
-
-async def paid_reading(update, context, question):
-    uid = get_user(update)
-    user = get_user_data(uid)
-
-    if not user["premium"]:
-        await safe_reply(update, "🔒 Только для премиум ✨", main_kb())
-        return
-
-    cards = pick_cards()
-    ans = ask_gpt(build_prompt(cards, question, user["history"]))
-
-    user["history"].append(ans)
-    save_db(db)
-
-    await safe_reply(update, f"🃏 {' – '.join(cards)}\n\n{ans}", main_kb())
+async def delete_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = get_uid(update)
+    if uid in db:
+        del db[uid]
+        save_db(db)
+    await update.message.reply_text("✅ Данные удалены")
 
 # === BUTTONS ===
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -186,58 +173,116 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     if q.data == "free":
-        await free_reading(update, context)
+        context.user_data["mode"] = "ask"
+        context.user_data["type"] = "free"
+
+        await q.edit_message_text(
+            "✨ Напиши свой вопрос.\n\nПример:\nЧто он чувствует ко мне?"
+        )
+
     elif q.data == "thoughts":
-        await paid_reading(update, context, "Что он думает обо мне?")
+        context.user_data["mode"] = "ask"
+        context.user_data["type"] = "thoughts"
+
+        await q.edit_message_text("💭 Напиши имя или ситуацию")
+
     elif q.data == "return":
-        await paid_reading(update, context, "Вернётся ли он?")
+        context.user_data["mode"] = "ask"
+        context.user_data["type"] = "return"
+
+        await q.edit_message_text("💔 Напиши про кого вопрос")
+
     elif q.data == "premium":
         await update.effective_chat.send_invoice(
-            title="Премиум Эсмеральда",
-            description="Все расклады без ограничений",
+            title="Премиум доступ",
+            description="Безлимитные расклады",
             payload="premium",
             provider_token=PROVIDER_TOKEN,
             currency="XTR",
             prices=[LabeledPrice("Premium", 100)]
         )
 
+    elif q.data == "privacy":
+        await q.edit_message_text(PRIVACY_TEXT)
+
+# === CHAT ===
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = get_uid(update)
+    user = get_user(uid)
+    text = update.message.text
+
+    if context.user_data.get("mode") == "ask":
+
+        spread_type = context.user_data.get("type")
+
+        if spread_type == "free":
+            ok, msg = can_free(user)
+            if not ok:
+                await update.message.reply_text(msg)
+                return
+
+        if spread_type in ["thoughts", "return"] and not user["premium"]:
+            await update.message.reply_text(
+                "🔒 Этот расклад доступен только в премиум ✨",
+                reply_markup=main_kb()
+            )
+            return
+
+        await update.message.reply_text("🔮 Смотрю на карты...")
+
+        cards = pick_cards()
+        answer = ask_gpt(build_prompt(cards, text, user["history"]))
+
+        user["history"].append(text)
+        user["history"].append(answer)
+
+        if spread_type == "free":
+            mark_free(user)
+
+        save_db(db)
+        context.user_data["mode"] = None
+
+        # 🔥 ПРОДАЮЩИЙ АПСЕЛЛ
+        upsell = "\n\n💫 Хочешь узнать, что он думает прямо сейчас — это уже глубже...\nОткрой премиум ⭐"
+
+        await update.message.reply_text(
+            f"🃏 {' – '.join(cards)}\n\n{answer}{upsell}",
+            reply_markup=main_kb()
+        )
+        return
+
+    # обычный чат
+    answer = ask_gpt(build_prompt(["интуиция"], text, user["history"]))
+    user["history"].append(text)
+    user["history"].append(answer)
+    save_db(db)
+
+    await update.message.reply_text(answer)
+
 # === PAYMENT ===
 async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.pre_checkout_query.answer(ok=True)
 
 async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = get_user(update)
-    user = get_user_data(uid)
+    uid = get_uid(update)
+    user = get_user(uid)
 
     user["premium"] = True
     save_db(db)
 
     await update.message.reply_text("🌟 Премиум активирован!")
 
-# === CHAT ===
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = get_user(update)
-    user = get_user_data(uid)
-
-    text = update.message.text
-    ans = ask_gpt(build_prompt(["интуиция"], text, user["history"]))
-
-    user["history"].append(text)
-    user["history"].append(ans)
-    save_db(db)
-
-    await update.message.reply_text(ans)
-
 # === RUN ===
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("delete_me", delete_me))
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
 
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
 
-    print("🔥 PRO TAROT BOT STARTED")
+    print("🔥 BOT STARTED")
     app.run_polling()
