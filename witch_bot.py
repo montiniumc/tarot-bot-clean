@@ -5,9 +5,7 @@ import asyncio
 from pathlib import Path
 from datetime import datetime, timedelta
 
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters, ContextTypes, PreCheckoutQueryHandler
@@ -15,12 +13,13 @@ from telegram.ext import (
 
 from openai import OpenAI
 
+# ===== ENV =====
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
-PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN", "")
 
 client = OpenAI(api_key=OPENROUTER_KEY, base_url="https://openrouter.ai/api/v1")
 
+# ===== DB =====
 DB_FILE = Path("db.json")
 
 def load_db():
@@ -42,12 +41,13 @@ def get_user(uid):
             "premium": False,
             "last_free": None,
             "history": [],
+            "summary": "",
             "referrals": 0,
             "invited_by": None
         }
     return db[uid]
 
-# === TAROT ===
+# ===== TAROT 78 =====
 MAJORS = ["Шут","Маг","Жрица","Императрица","Император","Иерофант","Влюбленные","Колесница","Сила","Отшельник","Колесо Фортуны","Справедливость","Повешенный","Смерть","Умеренность","Дьявол","Башня","Звезда","Луна","Солнце","Суд","Мир"]
 
 SUITS = {
@@ -66,19 +66,24 @@ def pick_cards():
     cards = random.sample(ALL_CARDS, 3)
     return [c + (" (перевернутая)" if random.choice([True, False]) else "") for c in cards]
 
-# === GPT ===
-def build_prompt(cards, question, history):
-    hist = "\n".join(history[-6:])
-    return f"""
-Ты — живой таролог.
+# ===== GPT =====
+def build_prompt(cards, question, user):
+    history = "\n".join(user["history"][-6:])
+    summary = user.get("summary", "")
 
-История:
-{hist}
+    return f"""
+Ты — тёплый таролог.
+
+Контекст пользователя:
+{summary}
+
+Последний диалог:
+{history}
 
 Карты: {", ".join(cards)}
 Вопрос: {question}
 
-Добавь лёгкое ощущение, что есть скрытый фактор (но без прямых обвинений).
+Добавь лёгкое ощущение скрытого фактора (третье лицо), но мягко.
 
 Формат:
 ✨ Ситуация:
@@ -94,13 +99,28 @@ def ask_gpt(prompt):
         )
         return r.choices[0].message.content
     except:
-        return "Ошибка..."
+        return "🔮 Ошибка генерации..."
 
-# === LIMIT ===
+# ===== MEMORY =====
+def update_memory(user, text, answer):
+    user["history"].append(text)
+    user["history"].append(answer)
+    user["history"] = user["history"][-10:]
+
+    try:
+        summary_prompt = f"Сократи до сути:\n{user['history']}"
+        r = client.chat.completions.create(
+            model="openai/gpt-4o-mini",
+            messages=[{"role":"user","content":summary_prompt}]
+        )
+        user["summary"] = r.choices[0].message.content
+    except:
+        pass
+
+# ===== LIMIT =====
 def can_free(user):
     if user["premium"]:
         return True, None
-
     if not user["last_free"]:
         return True, None
 
@@ -108,50 +128,45 @@ def can_free(user):
     if datetime.now() - last >= timedelta(hours=24):
         return True, None
 
-    return False, "⏳ Бесплатный расклад уже был"
+    return False, "⏳ Уже был расклад сегодня"
 
 def mark_free(user):
     user["last_free"] = datetime.now().isoformat()
 
-# === UI ===
+# ===== UI =====
 def main_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🃏 Бесплатный расклад", callback_data="free")],
         [InlineKeyboardButton("💭 Его мысли", callback_data="thoughts")],
         [InlineKeyboardButton("💔 Вернётся ли он", callback_data="return")],
-        [InlineKeyboardButton("👥 Пригласить друзей", callback_data="ref")]
+        [InlineKeyboardButton("💎 Купить премиум", callback_data="premium")],
+        [InlineKeyboardButton("👥 Пригласить друзей", callback_data="ref")],
+        [InlineKeyboardButton("🔒 Конфиденциальность", callback_data="privacy")]
     ])
 
-# === START (рефералка) ===
+# ===== START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = get_uid(update)
     user = get_user(uid)
 
-    # реферал
     if context.args:
         ref = context.args[0]
         if ref != uid and not user["invited_by"]:
             user["invited_by"] = ref
-            ref_user = get_user(ref)
-            ref_user["referrals"] += 1
-
-            # бонус
-            ref_user["last_free"] = None
+            get_user(ref)["referrals"] += 1
 
     save_db(db)
 
     bot_username = (await context.bot.get_me()).username
-    ref_link = f"https://t.me/{bot_username}?start={uid}"
 
     await update.message.reply_text(
-        f"🔮 Добро пожаловать\n\n"
-        f"Твоя ссылка:\n{ref_link}\n\n"
+        f"🔮 Я Эсмеральда\n\n"
         f"Приглашено: {user['referrals']}\n\n"
-        f"За каждого — бонусный расклад 🔥",
+        f"Ссылка:\nhttps://t.me/{bot_username}?start={uid}",
         reply_markup=main_kb()
     )
 
-# === BUTTONS ===
+# ===== BUTTONS =====
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -164,24 +179,51 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif q.data == "thoughts":
         context.user_data["mode"] = "ask"
         context.user_data["type"] = "thoughts"
-        await q.edit_message_text("Напиши имя")
+        await q.edit_message_text("Имя человека")
 
     elif q.data == "return":
         context.user_data["mode"] = "ask"
         context.user_data["type"] = "return"
-        await q.edit_message_text("Напиши ситуацию")
+        await q.edit_message_text("Опиши ситуацию")
 
-    elif q.data == "ref":
-        uid = get_uid(update)
-        bot_username = (await context.bot.get_me()).username
-        link = f"https://t.me/{bot_username}?start={uid}"
-
-        await q.edit_message_text(
-            f"👥 Твоя ссылка:\n{link}\n\n"
-            "За каждого друга — бонус"
+    elif q.data == "premium":
+        await context.bot.send_invoice(
+            chat_id=q.message.chat_id,
+            title="🔮 Премиум",
+            description="Безлимит + скрытые расклады",
+            payload="premium",
+            provider_token="",
+            currency="XTR",
+            prices=[LabeledPrice("Премиум", 100)]
         )
 
-# === CHAT ===
+    elif q.data == "privacy":
+        await q.edit_message_text(
+            "🔒 Конфиденциальность:\n\n"
+            "Храню:\n• Telegram ID\n• историю\n• статус\n\n"
+            "Соответствует 152-ФЗ РФ\n"
+            "Данные не передаются третьим лицам\n\n"
+            "/delete_me — удалить всё"
+        )
+
+# ===== FUNNEL =====
+async def sales_funnel(chat_id, context):
+    await asyncio.sleep(30)
+    await context.bot.send_message(chat_id, "💭 Я не всё сказала...")
+
+    await asyncio.sleep(40)
+    await context.bot.send_message(chat_id, "💔 Есть влияние третьего лица...")
+
+    await asyncio.sleep(40)
+    await context.bot.send_message(
+        chat_id,
+        "Хочешь узнать его мысли?",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("💭 Его мысли", callback_data="thoughts")]
+        ])
+    )
+
+# ===== CHAT =====
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = get_uid(update)
     user = get_user(uid)
@@ -203,13 +245,9 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔮 Смотрю карты...")
 
         cards = pick_cards()
-        answer = ask_gpt(build_prompt(cards, text, user["history"]))
+        answer = ask_gpt(build_prompt(cards, text, user))
 
-        # 💔 триггер ревности
-        jealousy = "\n\n💔 Есть ощущение, что в его поле сейчас есть влияние извне..."
-
-        user["history"].append(text)
-        user["history"].append(answer)
+        update_memory(user, text, answer)
 
         if spread == "free":
             mark_free(user)
@@ -218,22 +256,45 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["mode"] = None
 
         await update.message.reply_text(
-            f"🃏 {' – '.join(cards)}\n\n{answer}{jealousy}",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💭 Узнать его мысли", callback_data="thoughts")]
-            ])
+            f"🃏 {' – '.join(cards)}\n\n{answer}\n\n💔 Есть скрытый фактор..."
         )
+
+        asyncio.create_task(sales_funnel(update.effective_chat.id, context))
         return
 
-    await update.message.reply_text("Задай вопрос через кнопку 🃏")
+    await update.message.reply_text("Нажми кнопку 🃏")
 
-# === RUN ===
+# ===== PAYMENT =====
+async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.pre_checkout_query.answer(ok=True)
+
+async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = get_uid(update)
+    user = get_user(uid)
+
+    user["premium"] = True
+    save_db(db)
+
+    await update.message.reply_text("🌟 Премиум активирован!")
+
+# ===== DELETE =====
+async def delete_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = get_uid(update)
+    if uid in db:
+        del db[uid]
+        save_db(db)
+    await update.message.reply_text("✅ Данные удалены")
+
+# ===== RUN =====
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("delete_me", delete_me))
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
+    app.add_handler(PreCheckoutQueryHandler(pre_checkout))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
 
-    print("🔥 BOT STARTED")
+    print("🚀 BOT STARTED")
     app.run_polling()
