@@ -141,7 +141,7 @@ def main_kb():
 
 def buy_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔓 Открыть полный расклад — 100⭐", callback_data="premium")]
+        [InlineKeyboardButton("🔓 Открыть полный расклад — 500⭐", callback_data="premium")]
     ])
 # === START ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -181,7 +181,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             payload="premium",
             provider_token="",  # для Stars пусто
             currency="XTR",
-            prices=[LabeledPrice("Премиум", 100)],
+            prices=[LabeledPrice("Премиум", 500)],
         )
 
     elif q.data == "ref":
