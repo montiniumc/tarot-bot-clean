@@ -175,18 +175,15 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text("❓ Напиши свой вопрос")
 
     elif q.data == "premium":
-        if PROVIDER_TOKEN:
-            await update.effective_chat.send_invoice(
-                title="Премиум",
-                description="Полный доступ",
-                payload="premium",
-                provider_token=PROVIDER_TOKEN,
-                currency="XTR",
-                prices=[LabeledPrice("Premium", 100)]
-            )
-        else:
-            await q.message.reply_text("💰 Нажми кнопку ниже", reply_markup=buy_kb())
-
+    await context.bot.send_invoice(
+        chat_id=q.from_user.id,
+        title="Премиум доступ",
+        description="Полный доступ ко всем раскладам и ответам",
+        payload="premium",
+        provider_token="",  # ДЛЯ STARS ВСЕГДА ПУСТОЙ
+        currency="XTR",
+        prices=[LabeledPrice("Премиум", 100)],
+    )
     elif q.data == "ref":
         link = f"https://t.me/{(await context.bot.get_me()).username}?start={get_uid(update)}"
         await q.message.reply_text(f"🔗 Твоя ссылка:\n{link}\n\n+1 бесплатный расклад за друга")
