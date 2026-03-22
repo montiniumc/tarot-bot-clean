@@ -141,8 +141,8 @@ def main_kb():
 
 def buy_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💰 Купить премиум", callback_data="premium")]
-    ])
+        [InlineKeyboardButton("🔓 Открыть полный расклад — 100⭐", callback_data="premium")]
+        )
 
 # === START ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -175,22 +175,22 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text("❓ Напиши свой вопрос")
 
     elif q.data == "premium":
-    await context.bot.send_invoice(
-        chat_id=q.from_user.id,
-        title="Премиум доступ",
-        description="Полный доступ ко всем раскладам и ответам",
-        payload="premium",
-        provider_token="",  # ДЛЯ STARS ВСЕГДА ПУСТОЙ
-        currency="XTR",
-        prices=[LabeledPrice("Премиум", 100)],
-    )
+        await context.bot.send_invoice(
+            chat_id=q.from_user.id,
+            title="Премиум доступ",
+            description="Полный доступ ко всем раскладам и ответам",
+            payload="premium",
+            provider_token="",  # для Stars пусто
+            currency="XTR",
+            prices=[LabeledPrice("Премиум", 100)],
+        )
+
     elif q.data == "ref":
         link = f"https://t.me/{(await context.bot.get_me()).username}?start={get_uid(update)}"
         await q.message.reply_text(f"🔗 Твоя ссылка:\n{link}\n\n+1 бесплатный расклад за друга")
 
     elif q.data == "privacy":
         await q.message.reply_text(PRIVACY_TEXT)
-
 # === CHAT ===
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = get_uid(update)
