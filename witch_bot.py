@@ -3,13 +3,26 @@ import json
 import random
 from pathlib import Path
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LabeledPrice
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    filters,
+)
 from openai import OpenAI
 
 # ——————————————————— ПЕРЕМЕННЫЕ СРЕДЫ ———————————————————
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
+STARS_TOKEN = os.getenv("STARS_PROVIDER_TOKEN")  # для Telegram оплаты Stars
 
 client = OpenAI(api_key=OPENROUTER_KEY, base_url="https://openrouter.ai/api/v1")
 
@@ -126,9 +139,6 @@ CONF_TEXT = """🔒 Политика конфиденциальности:
 • Можно удалить /delete_me
 • Пользователи старше 18 лет"""
 
-# ——————————————————— СТАТУСЫ ———————————————————
-waiting_for_question = {}  # user_id -> True
-
 # ——————————————————— КОМАНДЫ ———————————————————
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -146,50 +156,52 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     welcome = "🌟 Премиум активен!" if context.user_data["premium"] else "🔮 Я Эсмеральда, бот-таролог"
-    await update.message.reply_text(f"{welcome}\nТвой уровень: {lvl_name} ({stats['steps']}/{STEPS_PER_LEVEL})\n\n{CONF_TEXT}", reply_markup=reply_markup)
+    await update.message.reply_text(
+        f"{welcome}\nТвой уровень: {lvl_name} ({stats['steps']}/{STEPS_PER_LEVEL})\n\n{CONF_TEXT}",
+        reply_markup=reply_markup
+    )
 
-# ——————————————————— КНОПКИ ———————————————————
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "tarot":
-        uid = str(query.from_user.id)
-        waiting_for_question[uid] = True
-        await query.message.reply_text("🔮 Какой вопрос хочешь задать картам?")
-    elif query.data == "buy_premium":
-        await query.edit_message_text("💰 Оплата через Stars доступна прямо в Telegram. Просто нажми кнопку 'Купить'.")
-    elif query.data == "chat":
-        await query.edit_message_text("💬 Пиши сюда, я буду помнить твой диалог ✨")
-    elif query.data == "ritual":
-        await query.edit_message_text("🌱 Ритуал дня: 5 минут без телефона")
-
-# ——————————————————— ОБРАБОТКА ВВОДА ———————————————————
-async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
-    text = update.message.text
-
-    # обычный чат
-    if not waiting_for_question.get(uid):
-        chat_memory.setdefault(uid, []).append({"time": datetime.now().isoformat(), "text": text})
-        save_json(CHAT_MEMORY_FILE, chat_memory)
-        await update.message.reply_text("💬 Я помню твой диалог. Продолжай…")
-        return
-
-    # получили вопрос для расклада
-    waiting_for_question[uid] = False
-    question = text
+# ——————————————————— ТАРО РАСКЛАД С ВОПРОСОМ И ЛИМИТОМ ———————————————————
+async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE, question=None):
     stats = user_stats(context)
     can_use, err = can_do_free_reading(context)
 
+    if isinstance(update, Update) and update.callback_query:
+        send = update.callback_query.message.reply_text
+        uid = str(update.callback_query.from_user.id)
+    else:
+        send = update.message.reply_text
+        uid = str(update.effective_user.id)
+
     if not can_use and not context.user_data.get("premium"):
         kb = [[InlineKeyboardButton("💰 Купить премиум", callback_data="buy_premium")]]
-        await update.message.reply_text(f"{err}\nДля расширенного расклада:", reply_markup=InlineKeyboardMarkup(kb))
+        await send(f"{err}\nДля расширенного расклада с подробным ответом и бонусами:",
+                   reply_markup=InlineKeyboardMarkup(kb))
         return
 
+    # Если вопрос не передан, спрашиваем его
+    if not question:
+        await send("❓ Какой вопрос ты хочешь задать таро? Напиши ответ в течение 2 минут.")
+
+        def check(m):
+            return m.from_user.id == int(uid) and m.text
+
+        try:
+            response = await context.application.wait_for(
+                filters.TEXT & (~filters.COMMAND),
+                timeout=120,
+                check=check
+            )
+            question = response.text
+        except TimeoutError:
+            await send("⏰ Время ожидания вопроса истекло. Попробуй снова.")
+            return
+
+    # Генерация расклада
     cards_keys = random_3_tarot()
     cards = [format_card(k) for k in cards_keys]
-    prompt = build_prompt(cards, question, context.user_data.get("premium"))
 
+    prompt = build_prompt(cards, question, context.user_data.get("premium"))
     try:
         resp = client.chat.completions.create(
             model="openai/gpt-4o-mini",
@@ -209,14 +221,53 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ———————————— Автоворонка на премиум ————————————
     if not context.user_data.get("premium"):
         kb = [[InlineKeyboardButton("💰 Купить премиум", callback_data="buy_premium")]]
-        await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb))
+        await send(msg, reply_markup=InlineKeyboardMarkup(kb))
     else:
-        await update.message.reply_text(msg)
+        await send(msg)
 
     mark_free_done(stats)
 
+    # сохраняем диалог
     chat_memory.setdefault(uid, []).append({"time": datetime.now().isoformat(), "text": question})
     save_json(CHAT_MEMORY_FILE, chat_memory)
+
+# ——————————————————— BUTTONS ———————————————————
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "tarot":
+        await today_command(update, context)
+    elif query.data == "buy_premium":
+        if STARS_TOKEN:
+            prices = [LabeledPrice(label="Премиум доступ 1 месяц", amount=50000)]
+            await context.bot.send_invoice(
+                chat_id=query.from_user.id,
+                title="Премиум Stars",
+                description="Доступ ко всем раскладам и бонусам",
+                payload="premium_month",
+                provider_token=STARS_TOKEN,
+                currency="RUB",
+                prices=prices,
+                need_email=True,
+                is_flexible=False
+            )
+        else:
+            await query.edit_message_text(
+                "💰 Оплата через Stars доступна прямо в Telegram. Ссылка на оплату: [оплатить](https://example.com)",
+                parse_mode="Markdown"
+            )
+    elif query.data == "chat":
+        await query.edit_message_text("💬 Пиши сюда, я буду помнить твой диалог ✨")
+    elif query.data == "ritual":
+        await query.edit_message_text("🌱 Ритуал дня: 5 минут без телефона")
+
+# ——————————————————— ПАМЯТЬ ДИАЛОГА ———————————————————
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = str(update.effective_user.id)
+    chat_memory.setdefault(uid, []).append({"time": datetime.now().isoformat(), "text": update.message.text})
+    save_json(CHAT_MEMORY_FILE, chat_memory)
+    await update.message.reply_text("💬 Я помню твой диалог. Продолжай…")
 
 # ——————————————————— RUN ———————————————————
 if __name__ == "__main__":
@@ -224,7 +275,7 @@ if __name__ == "__main__":
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_question))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), chat))
 
     print("🤖 BOT ESMERALDA STARTED!")
     app.run_polling()
