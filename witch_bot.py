@@ -156,8 +156,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome = "🌟 Премиум активен!" if context.user_data["premium"] else "🔮 Я Эсмеральда, бот-таролог"
     await update.message.reply_text(f"{welcome}\nТвой уровень: {lvl_name} ({stats['steps']}/{STEPS_PER_LEVEL})\n\n{CONF_TEXT}", reply_markup=reply_markup)
 
-# ——————————————————— ТАРО РАСКЛАД ———————————————————
-async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE, question="Как дела сегодня?"):
+# ——————————————————— ТАРО РАСКЛАД С ВОПРОСОМ И ТРИГГЕРАМИ ———————————————————
+async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE, question=None):
     stats = user_stats(context)
     can_use, err = can_do_free_reading(context)
 
@@ -168,14 +168,21 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ques
         send = update.message.reply_text
 
     if not can_use:
-        keyboard = [[InlineKeyboardButton("💰 Купить премиум", callback_data="buy_premium")]]
-        await send(f"{err}\nДля расширенного расклада:", reply_markup=InlineKeyboardMarkup(keyboard))
+        kb = [[InlineKeyboardButton("💰 Купить премиум", callback_data="buy_premium")]]
+        await send(f"{err}\nДля расширенного расклада:", reply_markup=InlineKeyboardMarkup(kb))
         return
 
+    # Если вопрос не передан, запрашиваем его у пользователя
+    if not question:
+        await send("💬 Введи свой вопрос для расклада:")
+        return
+
+    # Генерация карт
     cards_keys = random_3_tarot()
     cards = [format_card(k) for k in cards_keys]
 
     prompt = build_prompt(cards, question, context.user_data.get("premium"))
+
     try:
         resp = client.chat.completions.create(
             model="openai/gpt-4o-mini",
@@ -185,45 +192,51 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ques
     except Exception:
         reply = "🔮 Ошибка генерации…"
 
+    # Основное сообщение
     msg = f"🃏 {' – '.join(cards)}\n\n{reply}\n\n{add_step(stats)}"
 
-# Триггер ревности
-if "третье лицо" in question.lower() or "он с кем-то" in question.lower() or "она с кем-то" in question.lower() or "третий" in question.lower() or "третья" in question.lower():
-    msg += "\n\n💔 Есть скрытый фактор — возможное третье лицо в ситуации."
+    # ———————————— Триггер ревности ————————————
+    lower_text = question.lower()
+    if any(kw in lower_text for kw in ["третье лицо","он с кем-то","она с кем-то","третий","третья"]):
+        msg += "\n\n💔 Есть скрытый фактор — возможное третье лицо в ситуации."
 
-# Автоворонка на премиум
-if not can_use and not context.user_data.get("premium"):
-    kb = [[InlineKeyboardButton("💰 Купить премиум", callback_data="buy_premium")]]
-    msg += "\n\nДля расширенного расклада с подробным ответом и бонусами, нажми кнопку ниже:"
-    await send(msg, reply_markup=InlineKeyboardMarkup(kb))
-else:
-    await send(msg)
+    # ———————————— Автоворонка на премиум ————————————
+    if not can_use and not context.user_data.get("premium"):
+        kb = [[InlineKeyboardButton("💰 Купить премиум", callback_data="buy_premium")]]
+        await send(msg, reply_markup=InlineKeyboardMarkup(kb))
+    else:
+        await send(msg)
 
-mark_free_done(stats)
+    mark_free_done(stats)
+
+    # сохраняем диалог
+    uid = str(update.effective_user.id)
+    chat_memory.setdefault(uid, []).append({"time": datetime.now().isoformat(), "text": question})
+    save_json(CHAT_MEMORY_FILE, chat_memory)
+
 # ——————————————————— BUTTONS ———————————————————
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     if query.data == "tarot":
-        await today_command(update, context)
+        # При нажатии вызываем расклад без вопроса, бот сам попросит его
+        await today_command(query, context)
     elif query.data == "buy_premium":
         await query.edit_message_text("💰 Оплата через Stars доступна прямо в Telegram. Просто нажми кнопку 'Купить'.")
     elif query.data == "chat":
         await query.edit_message_text("💬 Пиши сюда, я буду помнить твой диалог ✨")
     elif query.data == "ritual":
         await query.edit_message_text("🌱 Ритуал дня: 5 минут без телефона")
+
+# ——————————————————— ЧАТ ДЛЯ ПАМЯТИ ———————————————————
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     chat_memory.setdefault(uid, []).append({"time": datetime.now().isoformat(), "text": update.message.text})
     save_json(CHAT_MEMORY_FILE, chat_memory)
+    # Если пользователь ввёл вопрос для расклада, передаем его в today_command
+    await today_command(update, context, question=update.message.text)
 
-    if context.user_data.get("awaiting_question"):
-        question = update.message.text
-        context.user_data["awaiting_question"] = False
-        await today_command(update, context, question=question)
-    else:
-        await update.message.reply_text("💬 Я помню твой диалог. Продолжай…")
 # ——————————————————— RUN ———————————————————
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
