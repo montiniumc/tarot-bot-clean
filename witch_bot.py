@@ -1,33 +1,19 @@
-import os
-import json
-import random
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler,
+    ConversationHandler, ContextTypes, filters
+)
+import random, json, os
 from pathlib import Path
 from datetime import datetime, timedelta
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    LabeledPrice
-)
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    ConversationHandler,
-    filters,
-)
-from openai import OpenAI
+from urllib.parse import parse_qs
 
-# ——————————————————— ПЕРЕМЕННЫЕ СРЕДЫ ———————————————————
+# ——————————————————— ПЕРЕМЕННЫЕ ———————————————————
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
-STARS_TOKEN = os.getenv("STARS_PROVIDER_TOKEN")  # Telegram Stars
+FREE_READING_COOLDOWN_HOURS = 24
+STEPS_PER_LEVEL = 5
+LEVELS = ["Новичок", "Искатель", "Посвящённый", "Маг", "Верховный маг"]
 
-client = OpenAI(api_key=OPENROUTER_KEY, base_url="https://openrouter.ai/api/v1")
-
-# ——————————————————— ФАЙЛЫ ———————————————————
 PREMIUM_FILE = Path("premium_users.json")
 CHAT_MEMORY_FILE = Path("chat_memory.json")
 REFERRAL_FILE = Path("referrals.json")
@@ -36,46 +22,25 @@ premium_users = json.loads(PREMIUM_FILE.read_text(encoding="utf-8")) if PREMIUM_
 chat_memory = json.loads(CHAT_MEMORY_FILE.read_text(encoding="utf-8")) if CHAT_MEMORY_FILE.exists() else {}
 referrals = json.loads(REFERRAL_FILE.read_text(encoding="utf-8")) if REFERRAL_FILE.exists() else {}
 
+# ——————————————————— КОЛОДА ТАРО ———————————————————
+ALL_CARDS = ["9 Пентакли","Отшельник","Паж Мечи","Королева Пентакли","Перевернутая Умеренность","4 Чаш"]
+def random_3_tarot():
+    return random.sample(ALL_CARDS, 3)
+def format_card(card):
+    return f"{card} (перевернутая)" if random.random() < 0.5 else card
+
+# ——————————————————— ФУНКЦИИ ———————————————————
 def save_json(path: Path, data: dict):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-# ——————————————————— ПРЕМИУМ ———————————————————
-def is_premium_permanent(user_data) -> bool:
-    return user_data and user_data.get("premium") and user_data.get("permanent", False)
-
-# ——————————————————— УРОВНИ И ЛИМИТЫ ———————————————————
-LEVELS = ["Новичок", "Искатель", "Посвящённый", "Маг", "Верховный маг"]
-STEPS_PER_LEVEL = 5
-FREE_READING_COOLDOWN_HOURS = 24
-
-def user_stats(context: ContextTypes.DEFAULT_TYPE):
+def user_stats(context):
     data = context.user_data
     if "level" not in data:
-        data.update({
-            "level": 0,
-            "steps": 0,
-            "last_free_reading_at": None,
-            "bonus_readings": 0,
-        })
+        data.update({"level":0,"steps":0,"last_free_reading_at":None,"referrer":None})
     return data
 
-def add_step(stats):
-    stats["steps"] += 1
-    if stats["steps"] < STEPS_PER_LEVEL:
-        return f"Ты продвинулся по пути Мага на 1 шаг ({stats['steps']}/{STEPS_PER_LEVEL})."
-    stats["steps"] = 0
-    stats["level"] += 1
-    lvl_name = LEVELS[min(stats["level"], len(LEVELS)-1)]
-    stats["bonus_readings"] = max(stats["bonus_readings"] + 1, 1)
-    return f"Поздравляю! Ты стал {lvl_name}. Новый уровень — новый угол зрения на жизнь. Введи /bonus для бонусного расклада."
-
-def can_do_free_reading(context: ContextTypes.DEFAULT_TYPE):
+def can_do_free_reading(context):
     stats = user_stats(context)
-    user_id = str(context.user_data.get("id", context._user_id))
-    is_prem = context.user_data.get("premium") or is_premium_permanent(premium_users.get(user_id))
-    if is_prem:
-        return True, None
-
     last = stats.get("last_free_reading_at")
     if not last:
         return True, None
@@ -84,7 +49,6 @@ def can_do_free_reading(context: ContextTypes.DEFAULT_TYPE):
     diff = datetime.now() - last
     if diff >= timedelta(hours=FREE_READING_COOLDOWN_HOURS):
         return True, None
-
     remaining = timedelta(hours=FREE_READING_COOLDOWN_HOURS) - diff
     h, m = divmod(int(remaining.total_seconds() // 60), 60)
     return False, f"Бесплатный расклад доступен раз в день. Следующий через {h} ч {m} мин."
@@ -92,190 +56,90 @@ def can_do_free_reading(context: ContextTypes.DEFAULT_TYPE):
 def mark_free_done(stats):
     stats["last_free_reading_at"] = datetime.now().isoformat()
 
-# ——————————————————— КОЛОДА ТАРО ———————————————————
-MAJORS = [
-    ("0", "Шут"), ("1", "Маг"), ("2", "Жрица"), ("3", "Императрица"),
-    ("4", "Император"), ("5", "Иерофант"), ("6", "Влюбленные"),
-    ("7", "Колесница"), ("8", "Сила"), ("9", "Отшельник"), ("10", "Колесо Фортуны"),
-    ("11", "Справедливость"), ("12", "Повешенный"), ("13", "Смерть"), ("14", "Умеренность"),
-    ("15", "Дьявол"), ("16", "Башня"), ("17", "Звезда"), ("18", "Луна"), ("19", "Солнце"),
-    ("20", "Суд"), ("21", "Мир"),
-]
-MINOR_SUITS = {"wands": "Жезлы", "cups": "Чаши", "swords": "Мечи", "pentacles": "Пентакли"}
-MINOR_RANKS = ["Туз","2","3","4","5","6","7","8","9","10","Паж","Рыцарь","Королева","Король"]
+# ——————————————————— СОСТОЯНИЯ ———————————————————
+ASK_QUESTION = 1
 
-CARD_NAMES = {}
-for num, name in MAJORS:
-    CARD_NAMES[f"major:{num}"] = name
-for suit, suit_rus in MINOR_SUITS.items():
-    for rank in MINOR_RANKS:
-        CARD_NAMES[f"{suit}:{rank}"] = f"{rank} {suit_rus}"
-
-ALL_CARDS = list(CARD_NAMES.keys())
-
-def random_3_tarot():
-    return random.sample(ALL_CARDS, 3)
-
-def format_card(key):
-    base = CARD_NAMES[key]
-    if random.random() < 0.5:
-        return f"{base} (перевернутая)"
-    return base
-
-# ——————————————————— PROMPTS ———————————————————
-ESM_PROMPT_BASE = """Ты — Эсмеральда, бот-таролог, мягкая психотерапия без мистического пафоса.
-Формат ответа:
-1) Ситуация 2) Чувства 3) Действие
-Не даешь медицинские, юридические или финансовые советы."""
-
-def build_prompt(cards, question, is_premium):
-    cards_str = " – ".join(cards)
-    extra = "Дай развернутый ответ" if is_premium else "Дай краткий ответ в 3-6 предложений"
-    return f"{ESM_PROMPT_BASE}\nКарты: {cards_str}\nВопрос: {question}\n{extra}"
-
-# ——————————————————— КОНФИДЕНЦИАЛЬНОСТЬ ———————————————————
-CONF_TEXT = """🔒 Политика конфиденциальности:
-• Храним только user_id, уровень, премиум и бонусы
-• Данные не продаются и не используются для рекламы
-• Можно удалить /delete_me
-• Пользователи старше 18 лет"""
-
-# ——————————————————— START ———————————————————
+# ——————————————————— СТАРТ + РЕФЕРАЛКА ———————————————————
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    context.user_data["id"] = user_id
-    context.user_data["premium"] = is_premium_permanent(premium_users.get(user_id))
     stats = user_stats(context)
     lvl_name = LEVELS[min(stats["level"], len(LEVELS)-1)]
-
-    # Реферальная проверка
-    args = update.message.text.split()
-    if len(args) > 1:
-        ref_id = args[1]
-        if ref_id != user_id:
-            referrals.setdefault(ref_id, []).append(user_id)
+    
+    # Обработка реферала: /start ref=USERID
+    args = context.args
+    if args:
+        ref = args[0]
+        if ref.isdigit() and ref != str(update.effective_user.id):
+            stats["referrer"] = ref
+            referrals.setdefault(ref, []).append(str(update.effective_user.id))
             save_json(REFERRAL_FILE, referrals)
-
-    keyboard = [
-        [InlineKeyboardButton("🃏 Бесплатный расклад", callback_data="tarot")],
-        [InlineKeyboardButton("💰 Премиум Stars", callback_data="buy_premium")],
-        [InlineKeyboardButton("💬 Память диалога", callback_data="chat")],
-        [InlineKeyboardButton("🌱 Ритуал дня", callback_data="ritual")],
-    ]
+    
+    keyboard = [[InlineKeyboardButton("🃏 Бесплатный расклад", callback_data="tarot")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
-    welcome = "🌟 Премиум активен!" if context.user_data["premium"] else "🔮 Я Эсмеральда, бот-таролог"
     await update.message.reply_text(
-        f"{welcome}\nТвой уровень: {lvl_name} ({stats['steps']}/{STEPS_PER_LEVEL})\n\n{CONF_TEXT}",
+        f"Привет! Твой уровень: {lvl_name} ({stats['steps']}/{STEPS_PER_LEVEL})\n\n🔒 Конфиденциальность соблюдается.\nЕсли тебя пригласил кто-то — он получит бонус при твоем раскладе.",
         reply_markup=reply_markup
     )
 
-# ——————————————————— Conversation States ———————————————————
-ASK_QUESTION = 1
-
-async def ask_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['tarot_pending'] = True
-    await update.message.reply_text("❓ Какой вопрос ты хочешь задать таро? Напиши ответ в течение 2 минут.")
-    return ASK_QUESTION
-
-async def receive_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    question = update.message.text
-    context.user_data['tarot_pending'] = False
-    await do_tarot(update, context, question)
+# ——————————————————— КНОПКИ ———————————————————
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    stats = user_stats(context)
+    if query.data == "tarot":
+        can_use, err = can_do_free_reading(context)
+        if not can_use:
+            kb = [[InlineKeyboardButton("💰 Купить премиум", callback_data="buy_premium")]]
+            await query.edit_message_text(f"{err}", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+        await query.edit_message_text("Напиши свой вопрос для расклада:")
+        return ASK_QUESTION
+    elif query.data == "buy_premium":
+        kb = [[InlineKeyboardButton("Купить Stars", url="https://t.me/store")]]
+        await query.edit_message_text("💰 Оплата через Stars доступна прямо в Telegram:", reply_markup=InlineKeyboardMarkup(kb))
     return ConversationHandler.END
 
-async def do_tarot(update: Update, context: ContextTypes.DEFAULT_TYPE, question):
+# ——————————————————— ПОЛУЧЕНИЕ ВОПРОСА ———————————————————
+async def receive_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    question = update.message.text
     stats = user_stats(context)
-    can_use, err = can_do_free_reading(context)
-    uid = str(update.effective_user.id)
-    if not can_use and not context.user_data.get("premium"):
-        kb = [[InlineKeyboardButton("💰 Купить премиум", callback_data="buy_premium")]]
-        await update.message.reply_text(f"{err}\nДля расширенного расклада с подробным ответом и бонусами:",
-                   reply_markup=InlineKeyboardMarkup(kb))
-        return
-
-    cards_keys = random_3_tarot()
-    cards = [format_card(k) for k in cards_keys]
-
-    prompt = build_prompt(cards, question, context.user_data.get("premium"))
-    try:
-        resp = client.chat.completions.create(
-            model="openai/gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        reply = resp.choices[0].message.content
-    except Exception:
-        reply = "🔮 Ошибка генерации…"
-
-    msg = f"🃏 {' – '.join(cards)}\n\n{reply}\n\n{add_step(stats)}"
-
-    lower_text = question.lower()
-    if any(kw in lower_text for kw in ["третье лицо","он с кем-то","она с кем-то","третий","третья"]):
-        msg += "\n\n💔 Есть скрытый фактор — возможное третье лицо в ситуации."
-
-    if not context.user_data.get("premium"):
+    cards = [format_card(c) for c in random_3_tarot()]
+    reply = "1) Ситуация: ...\n2) Чувства: ...\n3) Действие: ..."  # Можно подключить GPT
+    msg = f"🃏 {' – '.join(cards)}\n\n{reply}\nТы продвинулся на 1 шаг."
+    
+    # Триггер ревности
+    if any(kw in question.lower() for kw in ["третье лицо","он с кем-то","она с кем-то","третий","третья"]):
+        msg += "\n💔 Есть скрытый фактор — возможное третье лицо в ситуации."
+    
+    # Автоворонка
+    can_use, _ = can_do_free_reading(context)
+    if not can_use:
         kb = [[InlineKeyboardButton("💰 Купить премиум", callback_data="buy_premium")]]
         await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb))
     else:
         await update.message.reply_text(msg)
-
     mark_free_done(stats)
 
-    chat_memory.setdefault(uid, []).append({"time": datetime.now().isoformat(), "text": question})
-    save_json(CHAT_MEMORY_FILE, chat_memory)
-
-# ——————————————————— BUTTONS ———————————————————
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "tarot":
-        return await ask_question(update, context)
-    elif query.data == "buy_premium":
-        if STARS_TOKEN:
-            prices = [LabeledPrice(label="Премиум доступ 1 месяц", amount=50000)]
-            await context.bot.send_invoice(
-                chat_id=query.from_user.id,
-                title="Премиум Stars",
-                description="Доступ ко всем раскладам и бонусам",
-                payload="premium_month",
-                provider_token=STARS_TOKEN,
-                currency="RUB",
-                prices=prices,
-                need_email=True,
-                is_flexible=False
-            )
-        else:
-            await query.edit_message_text(
-                "💰 Оплата через Stars доступна прямо в Telegram. Ссылка на оплату: [оплатить](https://example.com)",
-                parse_mode="Markdown"
-            )
-    elif query.data == "chat":
-        await query.edit_message_text("💬 Пиши сюда, я буду помнить твой диалог ✨")
-    elif query.data == "ritual":
-        await query.edit_message_text("🌱 Ритуал дня: 5 минут без телефона")
-
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
-    chat_memory.setdefault(uid, []).append({"time": datetime.now().isoformat(), "text": update.message.text})
-    save_json(CHAT_MEMORY_FILE, chat_memory)
-    await update.message.reply_text("💬 Я помню твой диалог. Продолжай…")
+    # Начисление бонуса рефереру
+    ref = stats.get("referrer")
+    if ref:
+        premium_users.setdefault(ref, {}).update({"bonus_readings": premium_users.get(ref, {}).get("bonus_readings",0)+1})
+        save_json(PREMIUM_FILE, premium_users)
+    
+    return ConversationHandler.END
 
 # ——————————————————— RUN ———————————————————
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
+    
     conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(button_handler, pattern="tarot")],
-        states={
-            ASK_QUESTION: [MessageHandler(filters.TEXT & (~filters.COMMAND), receive_question)]
-        },
-        fallbacks=[]
+        entry_points=[CallbackQueryHandler(button_handler)],
+        states={ASK_QUESTION: [MessageHandler(filters.TEXT & (~filters.COMMAND), receive_question)]},
+        fallbacks=[],
+        per_message=True
     )
-
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(conv_handler)
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), chat))
-
+    
     print("🤖 BOT ESMERALDA STARTED!")
     app.run_polling()
