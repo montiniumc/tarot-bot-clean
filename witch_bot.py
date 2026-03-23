@@ -141,14 +141,14 @@ def main_kb():
 
 def buy_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔓 Открыть полный расклад — 500⭐", callback_data="premium")]
+        [InlineKeyboardButton("💎 Купить Премиум — 1000 ₽", callback_data="premium")]
     ])
+
 # === START ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = get_uid(update)
     user = get_user(uid)
 
-    # рефералка
     args = update.message.text.split()
     if len(args) > 1:
         ref = args[1]
@@ -174,14 +174,37 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text("❓ Напиши свой вопрос")
 
     elif q.data == "premium":
+        text = (
+            "💎 Премиум доступ\n\n"
+            "✨ Что входит:\n"
+            "— Все расклады без ограничений\n"
+            "— Полный анализ ситуаций\n"
+            "— Приоритетные ответы\n\n"
+            "💰 Стоимость: 1000 ₽\n\n"
+            "Выберите способ оплаты:"
+        )
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💳 Оплатить 1000 ₽", callback_data="fake_pay")],
+            [InlineKeyboardButton("⭐ Оплатить 500 Stars", callback_data="stars_pay")]
+        ])
+
+        await q.message.reply_text(text, reply_markup=keyboard)
+
+    elif q.data == "stars_pay":
         await context.bot.send_invoice(
             chat_id=q.from_user.id,
             title="Премиум доступ",
-            description="Полный доступ ко всем раскладам и ответам",
+            description="Полный доступ ко всем раскладам",
             payload="premium",
-            provider_token="",  # для Stars пусто
+            provider_token="",
             currency="XTR",
             prices=[LabeledPrice("Премиум", 500)],
+        )
+
+    elif q.data == "fake_pay":
+        await q.message.reply_text(
+            "💳 Оплата через ЮKassa скоро будет доступна 💸"
         )
 
     elif q.data == "ref":
@@ -190,6 +213,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif q.data == "privacy":
         await q.message.reply_text(PRIVACY_TEXT)
+
 # === CHAT ===
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = get_uid(update)
@@ -224,15 +248,12 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         msg = f"🃏 {' – '.join(cards)}\n\n{answer}"
 
-        # триггер ревности
         if any(x in text.lower() for x in ["треть","с кем","измена"]):
             msg += "\n\n💔 Есть влияние третьего лица..."
 
         await update.message.reply_text(msg, reply_markup=buy_kb())
 
-        # автоворонка
         asyncio.create_task(upsell(update.effective_chat.id, context))
-
         return
 
     answer = ask_gpt(build_prompt(["интуиция"], text, user["history"]))
