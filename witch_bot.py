@@ -187,7 +187,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title="Таро-консультация (Тест)",
             description="Тестовый платёж 10 ₽",
             payload="premium_test",
-            provider_token=live_vRtLXEkHKhKWdVezT2DweqZIz-J-WGqntJdVg3JAL30,  # твой live ключ ЮKassa
+            provider_token="live_vRtLXEkHKhKWdVezT2DweqZIz-J-WGqntJdVg3JAL30"  # твой live ключ ЮKassa
             currency="RUB",
             prices=[LabeledPrice("Тестовый платёж", 10_00)],  # 10 ₽
             need_email=True
