@@ -16,8 +16,7 @@ from openai import OpenAI
 # === CONFIG ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
-PROVIDER_TOKEN = os.getenv("390540012:LIVE:92480")
-
+PROVIDER_TOKEN = "390540012:LIVE:92480"
 client = OpenAI(api_key=OPENROUTER_KEY, base_url="https://openrouter.ai/api/v1")
 
 # === DB ===
@@ -167,39 +166,54 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
+    # === РАСКЛАДЫ ===
     if q.data in ["free","thoughts","return"]:
         context.user_data["mode"] = "ask"
         context.user_data["type"] = q.data
         await q.message.reply_text("❓ Напиши свой вопрос")
+        return
 
+    # === ПРЕМИУМ МЕНЮ ===
     elif q.data == "premium":
         await q.message.reply_text(
             "💎 Премиум доступ\n\n"
             "— Все расклады без ограничений\n"
             "— Глубокий анализ\n\n"
-            "💰 1000 ₽",
-            reply_markup=buy_kb()
+            "💰 10 ₽ (тест)",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💳 Оплатить 10 ₽", callback_data="premium_pay")]
+            ])
         )
+        return
 
+    # === ОПЛАТА ===
     elif q.data == "premium_pay":
-        await context.bot.send_invoice(
-            chat_id=q.from_user.id,
-            title="Таро-консультация (Тест)",
-            description="Тестовый платёж 10 ₽",
-            payload="premium_test",
-            provider_token="390540012:LIVE:92480",
-            currency="RUB",
-            prices=[LabeledPrice("Тестовый платёж", 10_00)],  # 10 ₽
-            need_email=True
-        )
+        try:
+            await context.bot.send_invoice(
+                chat_id=q.from_user.id,
+                title="Таро-консультация (Тест)",
+                description="Тестовый платёж 10 ₽",
+                payload="premium_test",
+                provider_token=PROVIDER_TOKEN,
+                currency="RUB",
+                prices=[LabeledPrice("Тестовый платёж", 1000)],
+                need_email=True
+            )
+        except Exception as e:
+            print("❌ ОШИБКА ОПЛАТЫ:", e)
+            await q.message.reply_text(f"Ошибка: {e}")
+        return
 
+    # === РЕФЕРАЛКА ===
     elif q.data == "ref":
         link = f"https://t.me/{(await context.bot.get_me()).username}?start={get_uid(update)}"
         await q.message.reply_text(f"🔗 Твоя ссылка:\n{link}")
+        return
 
+    # === ПРИВАТНОСТЬ ===
     elif q.data == "privacy":
         await q.message.reply_text(PRIVACY_TEXT)
-
+        return
 # === CHAT ===
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = get_uid(update)
