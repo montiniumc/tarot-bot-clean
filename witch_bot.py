@@ -3,54 +3,37 @@ import json
 import random
 from pathlib import Path
 from datetime import datetime, timedelta
-
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
-)
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    MessageHandler, filters, ContextTypes, PreCheckoutQueryHandler
-)
-from openai import OpenAI
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.types import LabeledPrice
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+import asyncio
 
 # === CONFIG ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
-PROVIDER_TOKEN = "390540012:LIVE:92480"
-client = OpenAI(api_key=OPENROUTER_KEY, base_url="https://openrouter.ai/api/v1")
+PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN")  # токен ЮKassa для Telegram
+bot = Bot(token=TELEGRAM_TOKEN)
+dp = Dispatcher()
 
 # === DB ===
 DB_FILE = Path("db.json")
-
 def load_db():
     if DB_FILE.exists():
         return json.loads(DB_FILE.read_text(encoding="utf-8"))
     return {}
-
 def save_db(data):
     DB_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
 db = load_db()
-
 def get_uid(update):
-    return str(update.effective_user.id)
-
+    return str(update.from_user.id if hasattr(update, "from_user") else update.effective_user.id)
 def get_user(uid):
     if uid not in db:
-        db[uid] = {
-            "premium": False,
-            "last_free": None,
-            "history": [],
-            "refs": [],
-            "ref_by": None,
-            "bonus": 0
-        }
+        db[uid] = {"premium": False,"last_free": None,"history":[],"refs":[],"ref_by":None,"bonus":0}
     return db[uid]
 
 # === PRIVACY ===
 PRIVACY_TEXT = """
 🔒 Политика конфиденциальности
-
 • Хранится только ID и история
 • Данные не передаются третьим лицам
 • Можно удалить: /delete_me
@@ -68,223 +51,124 @@ SUITS = {
     "Мечей": ["Туз","2","3","4","5","6","7","8","9","10","Паж","Рыцарь","Королева","Король"],
     "Пентакли": ["Туз","2","3","4","5","6","7","8","9","10","Паж","Рыцарь","Королева","Король"],
 }
-
 ALL_CARDS = MAJORS + [f"{r} {s}" for s in SUITS for r in SUITS[s]]
-
 def pick_cards():
     return [f"{c} (перевернутая)" if random.random()<0.5 else c for c in random.sample(ALL_CARDS,3)]
 
 # === LIMIT ===
 def can_free(user):
-    if user["premium"] or user["bonus"] > 0:
-        return True, None
-
-    if not user["last_free"]:
-        return True, None
-
+    if user["premium"] or user["bonus"] > 0: return True, None
+    if not user["last_free"]: return True, None
     diff = datetime.now() - datetime.fromisoformat(user["last_free"])
-    if diff >= timedelta(hours=24):
-        return True, None
-
+    if diff >= timedelta(hours=24): return True, None
     return False, "⏳ Бесплатный расклад уже был.\nОткрой премиум ✨"
-
 def mark_free(user):
-    if user["bonus"] > 0:
-        user["bonus"] -= 1
-    else:
-        user["last_free"] = datetime.now().isoformat()
-
-# === GPT ===
-def build_prompt(cards, question, history):
-    hist = "\n".join(history[-6:])
-    return f"""
-Ты — таролог Эсмеральда.
-
-История:
-{hist}
-
-Карты: {", ".join(cards)}
-Вопрос: {question}
-
-Формат:
-✨ Ситуация:
-💔 Чувства:
-🚀 Действие:
-"""
-
-def ask_gpt(prompt):
-    try:
-        r = client.chat.completions.create(
-            model="openai/gpt-4o-mini",
-            messages=[{"role":"user","content":prompt}]
-        )
-        return r.choices[0].message.content
-    except:
-        return "Карты молчат…"
+    if user["bonus"] > 0: user["bonus"] -= 1
+    else: user["last_free"] = datetime.now().isoformat()
 
 # === UI ===
 def main_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🃏 Бесплатный расклад", callback_data="free")],
-        [InlineKeyboardButton("💭 Анализ чувств", callback_data="thoughts")],
-        [InlineKeyboardButton("💔 Анализ отношений", callback_data="return")],
-        [InlineKeyboardButton("⭐ Премиум", callback_data="premium")],
-        [InlineKeyboardButton("🔗 Пригласить (+1 расклад)", callback_data="ref")],
-        [InlineKeyboardButton("🔒 Конфиденциальность", callback_data="privacy")]
-    ])
+    builder = InlineKeyboardBuilder()
+    builder.add(types.InlineKeyboardButton("🃏 Бесплатный расклад", callback_data="free"))
+    builder.add(types.InlineKeyboardButton("💭 Анализ чувств", callback_data="thoughts"))
+    builder.add(types.InlineKeyboardButton("💔 Анализ отношений", callback_data="return"))
+    builder.add(types.InlineKeyboardButton("⭐ Премиум", callback_data="premium"))
+    builder.add(types.InlineKeyboardButton("🔗 Пригласить (+1 расклад)", callback_data="ref"))
+    builder.add(types.InlineKeyboardButton("🔒 Конфиденциальность", callback_data="privacy"))
+    return builder.as_markup()
 
 def buy_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💎 Купить Премиум — 10 ₽ (тест)", callback_data="premium_pay")]
-    ])
+    builder = InlineKeyboardBuilder()
+    builder.add(types.InlineKeyboardButton("💎 Купить Премиум — 10 ₽ (тест)", callback_data="premium_pay"))
+    return builder.as_markup()
+
+# provider_data для ЮKassa
+PROVIDER_DATA = {
+    "receipt": {
+        "items": [{
+            "description": "Тестовый расклад Таро",
+            "quantity": 1,
+            "amount": {"value":"10.00","currency":"RUB"},
+            "vat_code":1,
+            "payment_mode":"full_payment",
+            "payment_subject":"service"
+        }]
+    }
+}
 
 # === START ===
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@dp.message(Command("start"))
+async def start(update: types.Message):
     uid = get_uid(update)
     user = get_user(uid)
-
-    args = update.message.text.split()
-    if len(args) > 1:
-        ref = args[1]
-        if ref != uid and not user["ref_by"]:
-            user["ref_by"] = ref
-            get_user(ref)["bonus"] += 1
-
-    save_db(db)
-
-    await update.message.reply_text(
+    await update.answer(
         "🔮 Я Эсмеральда.\n"
-        "Задай вопрос — посмотрим глубже.\n\n"
-        "✨ Помогу разобраться в ситуации и увидеть скрытые моменты.\n\n"
-        "❗️Услуга носит развлекательный и консультативный характер.\n\n"
-        + PRIVACY_TEXT,
+        "Задай вопрос — посмотрим глубже.\n\n✨ Помогу разобраться.\n\n❗️Развлекательный характер.\n\n" + PRIVACY_TEXT,
         reply_markup=main_kb()
     )
 
 # === BUTTONS ===
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
+@dp.callback_query()
+async def buttons(callback: types.CallbackQuery):
+    q = callback
     await q.answer()
+    uid = get_uid(q)
+    user = get_user(uid)
 
-    # выбор режима
-    if q.data in ["free", "thoughts", "return"]:
-        context.user_data["mode"] = "ask"
-        context.user_data["type"] = q.data
-        await q.message.reply_text("❓ Напиши свой вопрос")
+    if q.data in ["free","thoughts","return"]:
+        q.message.reply_text("❓ Напиши свой вопрос")
         return
 
-    # показать премиум
     elif q.data == "premium":
-        await q.message.reply_text(
-            "💎 Премиум доступ\n\n"
-            "— Все расклады без ограничений\n"
-            "— Глубокий анализ\n\n"
-            "💰 100 ₽ (тест)",
+        await q.message.answer(
+            "💎 Премиум доступ\n— Все расклады без ограничений\n— Глубокий анализ\n💰 1000 ₽",
             reply_markup=buy_kb()
         )
-        return
 
-    # 💳 ОПЛАТА
     elif q.data == "premium_pay":
-        try:
-            await context.bot.send_invoice(
-                chat_id=q.from_user.id,
-                title="Тестовый платёж",
-                description="Проверка оплаты",
-                payload="test_payment",
-                provider_token=PROVIDER_TOKEN,  # ← БЕРЁТСЯ ИЗ ENV
-                currency="RUB",
-                prices=[LabeledPrice("Тест", 10000)]  # 100 ₽
-            )
-        except Exception as e:
-            print("❌ ОШИБКА:", e)
-            await q.message.reply_text(f"Ошибка оплаты:\n{e}")
-        return
+        await bot.send_invoice(
+            chat_id=uid,
+            title="Тестовый Таро-платёж",
+            description="Тестовая оплата 10 ₽",
+            payload="premium_test",
+            provider_token=PROVIDER_TOKEN,
+            currency="RUB",
+            prices=[LabeledPrice(label="Тестовый расклад", amount=10_00)],
+            provider_data=json.dumps(PROVIDER_DATA),
+            need_email=True,
+            send_email_to_provider=True
+        )
 
-    # рефералка
     elif q.data == "ref":
-        link = f"https://t.me/{(await context.bot.get_me()).username}?start={get_uid(update)}"
-        await q.message.reply_text(f"🔗 Твоя ссылка:\n{link}")
-        return
+        await q.message.answer("🔗 Ссылка для приглашения: https://t.me/ВАШ_BOT_USERNAME?start=" + uid)
 
-    # приватность
     elif q.data == "privacy":
-        await q.message.reply_text(PRIVACY_TEXT)
-        return
-# === CHAT ===
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = get_uid(update)
-    user = get_user(uid)
-    text = update.message.text
+        await q.message.answer(PRIVACY_TEXT)
 
-    if context.user_data.get("mode") == "ask":
-        t = context.user_data["type"]
+# === PRECHECKOUT ===
+@dp.pre_checkout_query()
+async def pre_checkout_handler(pre_checkout: types.PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pre_checkout.id, ok=True)
 
-        if t=="free":
-            ok,msg = can_free(user)
-            if not ok:
-                await update.message.reply_text(msg, reply_markup=buy_kb())
-                return
-
-        if t in ["thoughts","return"] and not user["premium"]:
-            await update.message.reply_text("🔒 Только премиум", reply_markup=buy_kb())
-            return
-
-        await update.message.reply_text("🔮 Смотрю карты...")
-
-        cards = pick_cards()
-        answer = ask_gpt(build_prompt(cards, text, user["history"]))
-
-        user["history"] += [text, answer]
-
-        if t=="free":
-            mark_free(user)
-
-        save_db(db)
-        context.user_data["mode"]=None
-
-        msg = f"🃏 {' – '.join(cards)}\n\n{answer}"
-        msg += "\n\n💭 Интерпретация носит вероятностный характер"
-
-        await update.message.reply_text(msg, reply_markup=buy_kb())
-        return
-
-    answer = ask_gpt(build_prompt(["интуиция"], text, user["history"]))
-    await update.message.reply_text(answer)
-
-# === PAY ===
-async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.pre_checkout_query.answer(ok=True)
-
-async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = get_user(get_uid(update))
+# === SUCCESSFUL PAYMENT ===
+@dp.message(lambda m: m.successful_payment is not None)
+async def successful_payment_handler(message: types.Message):
+    user = get_user(get_uid(message))
     user["premium"] = True
     save_db(db)
-
-    await update.message.reply_text(
-        "🌟 Премиум активирован!\n\n"
-        "Теперь доступны все функции.\n"
-        "Напиши свой вопрос 💭"
-    )
+    await message.answer("🌟 Премиум активирован!\nТеперь доступны все функции.")
 
 # === DELETE ===
-async def delete_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = get_uid(update)
-    if uid in db:
-        del db[uid]
-        save_db(db)
-    await update.message.reply_text("✅ Данные удалены")
+@dp.message(Command("delete_me"))
+async def delete_me(message: types.Message):
+    uid = get_uid(message)
+    if uid in db: del db[uid]; save_db(db)
+    await message.answer("✅ Данные удалены")
 
 # === RUN ===
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("delete_me", delete_me))
-    app.add_handler(CallbackQueryHandler(buttons))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
-    app.add_handler(PreCheckoutQueryHandler(pre_checkout))
-    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
-
+async def main():
     print("🔥 BOT RUNNING")
-    app.run_polling()
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
