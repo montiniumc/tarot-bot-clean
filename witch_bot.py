@@ -132,8 +132,8 @@ def ask_gpt(prompt):
 def main_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🃏 Бесплатный расклад", callback_data="free")],
-        [InlineKeyboardButton("💭 Его мысли", callback_data="thoughts")],
-        [InlineKeyboardButton("💔 Вернётся ли он", callback_data="return")],
+        [InlineKeyboardButton("💭 Анализ чувств", callback_data="thoughts")],
+        [InlineKeyboardButton("💔 Анализ отношений", callback_data="return")],
         [InlineKeyboardButton("⭐ Премиум", callback_data="premium")],
         [InlineKeyboardButton("🔗 Пригласить (+1 расклад)", callback_data="ref")],
         [InlineKeyboardButton("🔒 Конфиденциальность", callback_data="privacy")]
@@ -159,9 +159,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_db(db)
 
     await update.message.reply_text(
-        "🔮 Я Эсмеральда.\nЗадай вопрос — посмотрим глубже.\n\n"+PRIVACY_TEXT,
-        reply_markup=main_kb()
-    )
+"🔮 Я Эсмеральда.\n"
+"Задай вопрос — посмотрим глубже.\n\n"
+"✨ Помогу разобраться в ситуации и увидеть скрытые моменты.\n\n"
+"❗️Услуга носит развлекательный и консультативный характер.\n\n"
+    + PRIVACY_TEXT,
+    reply_markup=main_kb()
+)
 
 # === BUTTONS ===
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -185,7 +189,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💳 Оплатить 1000 ₽", callback_data="fake_pay")],
+            [InlineKeyboardButton("💳 Оплатить 1000 ₽", callback_data="premium_pay")],
             [InlineKeyboardButton("⭐ Оплатить 500 Stars", callback_data="stars_pay")]
         ])
 
@@ -202,10 +206,35 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             prices=[LabeledPrice("Премиум", 500)],
         )
 
-    elif q.data == "fake_pay":
-        await q.message.reply_text(
-            "💳 Оплата через ЮKassa скоро будет доступна 💸"
-        )
+    elif q.data == "premium_pay":
+    await context.bot.send_invoice(
+        chat_id=q.from_user.id,
+        title="Таро-консультация (Премиум доступ)",
+        description="Доступ к расширенным раскладам и анализу",
+        payload="premium",
+        provider_token=PROVIDER_TOKEN,
+        currency="RUB",
+        prices=[LabeledPrice("Премиум доступ", 100000)],  # 1000 руб
+        need_email=True,
+        send_email_to_provider=True,
+        provider_data=json.dumps({
+            "receipt": {
+                "items": [
+                    {
+                        "description": "Таро-консультация",
+                        "quantity": 1,
+                        "amount": {
+                            "value": "1000.00",
+                            "currency": "RUB"
+                        },
+                        "vat_code": 1,
+                        "payment_subject": "service",
+                        "payment_mode": "full_payment"
+                    }
+                ]
+            }
+        })
+    )
 
     elif q.data == "ref":
         link = f"https://t.me/{(await context.bot.get_me()).username}?start={get_uid(update)}"
@@ -249,7 +278,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = f"🃏 {' – '.join(cards)}\n\n{answer}"
 
         if any(x in text.lower() for x in ["треть","с кем","измена"]):
-            msg += "\n\n💔 Есть влияние третьего лица..."
+            msg += "\n\n💔 Возможно влияние третьего лица..."
 
         await update.message.reply_text(msg, reply_markup=buy_kb())
 
@@ -276,7 +305,13 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user = get_user(get_uid(update))
     user["premium"] = True
     save_db(db)
-    await update.message.reply_text("🌟 Премиум активирован!")
+    await update.message.reply_text(
+    "🌟 Премиум активирован!\n\n"
+    "Теперь тебе доступны:\n"
+    "— Все расклады без ограничений\n"
+    "— Глубокий анализ ситуаций\n\n"
+    "Напиши свой вопрос 💭"
+)
 
 # === DELETE ===
 async def delete_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
