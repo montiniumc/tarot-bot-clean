@@ -185,33 +185,15 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif q.data == "premium_pay":
         await context.bot.send_invoice(
-            chat_id=q.from_user.id,
-            title="Таро-консультация (Премиум доступ)",
-            description="Доступ к расширенным раскладам",
-            payload="premium",
-            provider_token=PROVIDER_TOKEN,
-            currency="RUB",
-            prices=[LabeledPrice("Премиум доступ", 100000)],
-            need_email=True,
-            send_email_to_provider=True,
-            provider_data=json.dumps({
-                "receipt": {
-                    "items": [
-                        {
-                            "description": "Таро-консультация",
-                            "quantity": 1,
-                            "amount": {
-                                "value": "1000.00",
-                                "currency": "RUB"
-                            },
-                            "vat_code": 1,
-                            "payment_subject": "service",
-                            "payment_mode": "full_payment"
-                        }
-                    ]
-                }
-            })
-        )
+    chat_id=q.from_user.id,
+    title="Таро-консультация (Премиум доступ)",
+    description="Доступ к расширенным раскладам",
+    payload="premium",
+    provider_token=PROVIDER_TOKEN,
+    currency="RUB",
+    prices=[LabeledPrice("Премиум доступ", 100000)],  # 1000 ₽ в копейках
+    need_email=True
+)
 
     elif q.data == "ref":
         link = f"https://t.me/{(await context.bot.get_me()).username}?start={get_uid(update)}"
