@@ -18,7 +18,7 @@ from openai import OpenAI
 # === CONFIG ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
-PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN", "")
+PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN")
 
 client = OpenAI(api_key=OPENROUTER_KEY, base_url="https://openrouter.ai/api/v1")
 
@@ -55,7 +55,7 @@ PRIVACY_TEXT = """
 🔒 Политика конфиденциальности
 
 • Хранится только ID и история
-• Никаких продаж данных
+• Данные не передаются третьим лицам
 • Можно удалить: /delete_me
 • 18+
 """
@@ -101,16 +101,13 @@ def mark_free(user):
 def build_prompt(cards, question, history):
     hist = "\n".join(history[-6:])
     return f"""
-Ты — живой таролог Эсмеральда.
+Ты — таролог Эсмеральда.
 
 История:
 {hist}
 
 Карты: {", ".join(cards)}
 Вопрос: {question}
-
-Анализируй глубоко, как человек.
-Учитывай перевёрнутые карты.
 
 Формат:
 ✨ Ситуация:
@@ -141,7 +138,7 @@ def main_kb():
 
 def buy_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💎 Купить Премиум — 1000 ₽", callback_data="premium")]
+        [InlineKeyboardButton("💎 Купить Премиум — 1000 ₽", callback_data="premium_pay")]
     ])
 
 # === START ===
@@ -159,13 +156,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_db(db)
 
     await update.message.reply_text(
-"🔮 Я Эсмеральда.\n"
-"Задай вопрос — посмотрим глубже.\n\n"
-"✨ Помогу разобраться в ситуации и увидеть скрытые моменты.\n\n"
-"❗️Услуга носит развлекательный и консультативный характер.\n\n"
-    + PRIVACY_TEXT,
-    reply_markup=main_kb()
-)
+        "🔮 Я Эсмеральда.\n"
+        "Задай вопрос — посмотрим глубже.\n\n"
+        "✨ Помогу разобраться в ситуации и увидеть скрытые моменты.\n\n"
+        "❗️Услуга носит развлекательный и консультативный характер.\n\n"
+        + PRIVACY_TEXT,
+        reply_markup=main_kb()
+    )
 
 # === BUTTONS ===
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -178,67 +175,47 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text("❓ Напиши свой вопрос")
 
     elif q.data == "premium":
-        text = (
+        await q.message.reply_text(
             "💎 Премиум доступ\n\n"
-            "✨ Что входит:\n"
             "— Все расклады без ограничений\n"
-            "— Полный анализ ситуаций\n"
-            "— Приоритетные ответы\n\n"
-            "💰 Стоимость: 1000 ₽\n\n"
-            "Выберите способ оплаты:"
-        )
-
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💳 Оплатить 1000 ₽", callback_data="premium_pay")],
-            [InlineKeyboardButton("⭐ Оплатить 500 Stars", callback_data="stars_pay")]
-        ])
-
-        await q.message.reply_text(text, reply_markup=keyboard)
-
-    elif q.data == "stars_pay":
-        await context.bot.send_invoice(
-            chat_id=q.from_user.id,
-            title="Премиум доступ",
-            description="Полный доступ ко всем раскладам",
-            payload="premium",
-            provider_token="",
-            currency="XTR",
-            prices=[LabeledPrice("Премиум", 500)],
+            "— Глубокий анализ\n\n"
+            "💰 1000 ₽",
+            reply_markup=buy_kb()
         )
 
     elif q.data == "premium_pay":
-    await context.bot.send_invoice(
-        chat_id=q.from_user.id,
-        title="Таро-консультация (Премиум доступ)",
-        description="Доступ к расширенным раскладам и анализу",
-        payload="premium",
-        provider_token=PROVIDER_TOKEN,
-        currency="RUB",
-        prices=[LabeledPrice("Премиум доступ", 100000)],  # 1000 руб
-        need_email=True,
-        send_email_to_provider=True,
-        provider_data=json.dumps({
-            "receipt": {
-                "items": [
-                    {
-                        "description": "Таро-консультация",
-                        "quantity": 1,
-                        "amount": {
-                            "value": "1000.00",
-                            "currency": "RUB"
-                        },
-                        "vat_code": 1,
-                        "payment_subject": "service",
-                        "payment_mode": "full_payment"
-                    }
-                ]
-            }
-        })
-    )
+        await context.bot.send_invoice(
+            chat_id=q.from_user.id,
+            title="Таро-консультация (Премиум доступ)",
+            description="Доступ к расширенным раскладам",
+            payload="premium",
+            provider_token=PROVIDER_TOKEN,
+            currency="RUB",
+            prices=[LabeledPrice("Премиум доступ", 100000)],
+            need_email=True,
+            send_email_to_provider=True,
+            provider_data=json.dumps({
+                "receipt": {
+                    "items": [
+                        {
+                            "description": "Таро-консультация",
+                            "quantity": 1,
+                            "amount": {
+                                "value": "1000.00",
+                                "currency": "RUB"
+                            },
+                            "vat_code": 1,
+                            "payment_subject": "service",
+                            "payment_mode": "full_payment"
+                        }
+                    ]
+                }
+            })
+        )
 
     elif q.data == "ref":
         link = f"https://t.me/{(await context.bot.get_me()).username}?start={get_uid(update)}"
-        await q.message.reply_text(f"🔗 Твоя ссылка:\n{link}\n\n+1 бесплатный расклад за друга")
+        await q.message.reply_text(f"🔗 Твоя ссылка:\n{link}")
 
     elif q.data == "privacy":
         await q.message.reply_text(PRIVACY_TEXT)
@@ -276,26 +253,13 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["mode"]=None
 
         msg = f"🃏 {' – '.join(cards)}\n\n{answer}"
-
-        if any(x in text.lower() for x in ["треть","с кем","измена"]):
-            msg += "\n\n💔 Возможно влияние третьего лица..."
+        msg += "\n\n💭 Интерпретация носит вероятностный характер"
 
         await update.message.reply_text(msg, reply_markup=buy_kb())
-
-        asyncio.create_task(upsell(update.effective_chat.id, context))
         return
 
     answer = ask_gpt(build_prompt(["интуиция"], text, user["history"]))
     await update.message.reply_text(answer)
-
-# === FUNNEL ===
-async def upsell(chat_id, context):
-    await asyncio.sleep(15)
-    await context.bot.send_message(
-        chat_id,
-        "💭 Он думает о тебе прямо сейчас...\nХочешь узнать?",
-        reply_markup=buy_kb()
-    )
 
 # === PAY ===
 async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -305,13 +269,12 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user = get_user(get_uid(update))
     user["premium"] = True
     save_db(db)
+
     await update.message.reply_text(
-    "🌟 Премиум активирован!\n\n"
-    "Теперь тебе доступны:\n"
-    "— Все расклады без ограничений\n"
-    "— Глубокий анализ ситуаций\n\n"
-    "Напиши свой вопрос 💭"
-)
+        "🌟 Премиум активирован!\n\n"
+        "Теперь доступны все функции.\n"
+        "Напиши свой вопрос 💭"
+    )
 
 # === DELETE ===
 async def delete_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -329,7 +292,6 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("delete_me", delete_me))
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
-
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
 
