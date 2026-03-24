@@ -179,9 +179,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💎 Премиум доступ\n\n"
             "— Все расклады без ограничений\n"
             "— Глубокий анализ\n\n"
-            "💰 10 ₽ (тест)",
+            "💰 100 ₽ (тест)",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💳 Оплатить 10 ₽", callback_data="premium_pay")]
+                [InlineKeyboardButton("💳 Оплатить 100 ₽", callback_data="premium_pay")]
             ])
         )
         return
@@ -190,16 +190,15 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif q.data == "premium_pay":
         try:
             await context.bot.send_invoice(
-                chat_id=q.from_user.id,
-                title="Таро-консультация (Тест)",
-                description="Тестовый платёж 10 ₽",
-                payload="premium_test",
-                provider_token=PROVIDER_TOKEN,
-                currency="RUB",
-                prices=[LabeledPrice("Тестовый платёж", 1000)],
-                need_email=True
-            )
-        except Exception as e:
+    chat_id=q.from_user.id,
+    title="Тест",
+    description="Платёж 100 ₽",
+    payload="test",
+    provider_token=PROVIDER_TOKEN,
+    currency="RUB",
+    prices=[LabeledPrice("Платёж", 10000)]
+)        
+            except Exception as e:
             print("❌ ОШИБКА ОПЛАТЫ:", e)
             await q.message.reply_text(f"Ошибка: {e}")
         return
