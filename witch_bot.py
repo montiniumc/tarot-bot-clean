@@ -189,20 +189,21 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # === ОПЛАТА ===
     elif q.data == "premium_pay":
         try:
-            await context.bot.send_invoice(
-    chat_id=q.from_user.id,
-    title="Тест",
-    description="Платёж 100 ₽",
-    payload="test",
-    provider_token=PROVIDER_TOKEN,
-    currency="RUB",
-    prices=[LabeledPrice("Платёж", 10000)]
-)        
-            except Exception as e:
-            print("❌ ОШИБКА ОПЛАТЫ:", e)
-            await q.message.reply_text(f"Ошибка: {e}")
-        return
-
+           elif q.data == "premium_pay":
+    try:
+        await context.bot.send_invoice(
+            chat_id=q.from_user.id,
+            title="Тест",
+            description="Платёж 100 ₽",
+            payload="test",
+            provider_token=PROVIDER_TOKEN,
+            currency="RUB",
+            prices=[LabeledPrice("Платёж", 10000)]
+        )
+    except Exception as e:
+        print("❌ ОШИБКА ОПЛАТЫ:", e)
+        await q.message.reply_text(f"Ошибка: {e}")
+    return
     # === РЕФЕРАЛКА ===
     elif q.data == "ref":
         link = f"https://t.me/{(await context.bot.get_me()).username}?start={get_uid(update)}"
