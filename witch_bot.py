@@ -166,51 +166,48 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    # === РАСКЛАДЫ ===
-    if q.data in ["free","thoughts","return"]:
+    # выбор режима
+    if q.data in ["free", "thoughts", "return"]:
         context.user_data["mode"] = "ask"
         context.user_data["type"] = q.data
         await q.message.reply_text("❓ Напиши свой вопрос")
         return
 
-    # === ПРЕМИУМ МЕНЮ ===
+    # показать премиум
     elif q.data == "premium":
         await q.message.reply_text(
             "💎 Премиум доступ\n\n"
             "— Все расклады без ограничений\n"
             "— Глубокий анализ\n\n"
             "💰 100 ₽ (тест)",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💳 Оплатить 100 ₽", callback_data="premium_pay")]
-            ])
+            reply_markup=buy_kb()
         )
         return
 
-    # === ОПЛАТА ===
+    # 💳 ОПЛАТА
     elif q.data == "premium_pay":
         try:
-           elif q.data == "premium_pay":
-    try:
-        await context.bot.send_invoice(
-            chat_id=q.from_user.id,
-            title="Тест",
-            description="Платёж 100 ₽",
-            payload="test",
-            provider_token=PROVIDER_TOKEN,
-            currency="RUB",
-            prices=[LabeledPrice("Платёж", 10000)]
-        )
-    except Exception as e:
-        print("❌ ОШИБКА ОПЛАТЫ:", e)
-        await q.message.reply_text(f"Ошибка: {e}")
-    return
-    # === РЕФЕРАЛКА ===
+            await context.bot.send_invoice(
+                chat_id=q.from_user.id,
+                title="Тестовый платёж",
+                description="Проверка оплаты",
+                payload="test_payment",
+                provider_token=PROVIDER_TOKEN,  # ← БЕРЁТСЯ ИЗ ENV
+                currency="RUB",
+                prices=[LabeledPrice("Тест", 10000)]  # 100 ₽
+            )
+        except Exception as e:
+            print("❌ ОШИБКА:", e)
+            await q.message.reply_text(f"Ошибка оплаты:\n{e}")
+        return
+
+    # рефералка
     elif q.data == "ref":
         link = f"https://t.me/{(await context.bot.get_me()).username}?start={get_uid(update)}"
         await q.message.reply_text(f"🔗 Твоя ссылка:\n{link}")
         return
 
-    # === ПРИВАТНОСТЬ ===
+    # приватность
     elif q.data == "privacy":
         await q.message.reply_text(PRIVACY_TEXT)
         return
