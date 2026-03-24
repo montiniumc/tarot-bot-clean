@@ -184,15 +184,16 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif q.data == "premium_pay":
-        await context.bot.send_invoice(
-    chat_id=q.from_user.id,
-    title="Таро-консультация (Премиум доступ)",
-    description="Доступ к расширенным раскладам",
-    payload="premium",
-    provider_token=PROVIDER_TOKEN,
-    currency="RUB",
-    prices=[LabeledPrice("Премиум доступ", 100000)],  # 1000 ₽ в копейках
-    need_email=True
+    await context.bot.send_invoice(
+        chat_id=q.from_user.id,
+        title="Таро-консультация (Тест)",
+        description="Тестовый платёж 10 ₽",
+        payload="premium_test",
+        provider_token="live_vRtLXEkHKhKWdVezT2DweqZIz-J-WGqntJdVg3JAL30",  # вставь сюда свой API ключ
+        currency="RUB",
+        prices=[LabeledPrice("Тестовый платёж", 10_00)],  # 10 ₽, в копейках
+        need_email=True
+    )
 )
 
     elif q.data == "ref":
