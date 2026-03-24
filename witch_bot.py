@@ -11,7 +11,7 @@ import asyncio
 
 # === CONFIG ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN")  # токен ЮKassa для Telegram
+PROVIDER_TOKEN = os.getenv("390540012:LIVE:92480")  # токен ЮKassa для Telegram
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
@@ -131,7 +131,7 @@ async def buttons(callback: types.CallbackQuery):
             title="Тестовый Таро-платёж",
             description="Тестовая оплата 10 ₽",
             payload="premium_test",
-            provider_token=PROVIDER_TOKEN,
+            provider_token="390540012:LIVE:92480",
             currency="RUB",
             prices=[LabeledPrice(label="Тестовый расклад", amount=10_00)],
             provider_data=json.dumps(PROVIDER_DATA),
