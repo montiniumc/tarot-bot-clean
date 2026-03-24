@@ -1,7 +1,6 @@
 import os
 import json
 import random
-import asyncio
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -12,13 +11,12 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters, ContextTypes, PreCheckoutQueryHandler
 )
-
 from openai import OpenAI
 
 # === CONFIG ===
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
-PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN")
+PROVIDER_TOKEN = os.getenv("live_vRtLXEkHKhKWdVezT2DweqZIz-J-WGqntJdVg3JAL30")  # сюда можно вставить live_ключ ЮKassa
 
 client = OpenAI(api_key=OPENROUTER_KEY, base_url="https://openrouter.ai/api/v1")
 
@@ -138,7 +136,7 @@ def main_kb():
 
 def buy_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💎 Купить Премиум — 1000 ₽", callback_data="premium_pay")]
+        [InlineKeyboardButton("💎 Купить Премиум — 10 ₽ (тест)", callback_data="premium_pay")]
     ])
 
 # === START ===
@@ -184,16 +182,16 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif q.data == "premium_pay":
-    await context.bot.send_invoice(
-        chat_id=q.from_user.id,
-        title="Таро-консультация (Тест)",
-        description="Тестовый платёж 10 ₽",
-        payload="premium_test",
-        provider_token="live_vRtLXEkHKhKWdVezT2DweqZIz-J-WGqntJdVg3JAL30",  # вставь сюда свой API ключ
-        currency="RUB",
-        prices=[LabeledPrice("Тестовый платёж", 10_00)],  # 10 ₽, в копейках
-        need_email=True
-    )
+        await context.bot.send_invoice(
+            chat_id=q.from_user.id,
+            title="Таро-консультация (Тест)",
+            description="Тестовый платёж 10 ₽",
+            payload="premium_test",
+            provider_token=live_vRtLXEkHKhKWdVezT2DweqZIz-J-WGqntJdVg3JAL30,  # твой live ключ ЮKassa
+            currency="RUB",
+            prices=[LabeledPrice("Тестовый платёж", 10_00)],  # 10 ₽
+            need_email=True
+        )
 
     elif q.data == "ref":
         link = f"https://t.me/{(await context.bot.get_me()).username}?start={get_uid(update)}"
