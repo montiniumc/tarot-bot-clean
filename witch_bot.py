@@ -194,7 +194,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prices=[LabeledPrice("Тестовый платёж", 10_00)],  # 10 ₽, в копейках
         need_email=True
     )
-)
 
     elif q.data == "ref":
         link = f"https://t.me/{(await context.bot.get_me()).username}?start={get_uid(update)}"
